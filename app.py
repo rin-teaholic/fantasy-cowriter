@@ -1,6 +1,8 @@
 import os
 import time
 import streamlit as st
+from crewai import Agent, Task, Crew, Process
+from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
 
 # --- 画面の基本設定 ---
 st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
@@ -33,7 +35,7 @@ os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 st.title("✍️ Fantasy Co-Writer")
 
 DOCUMENT_ID = st.secrets["DOCUMENT_ID"]
-MODEL = "gemini/gemini-3.5-flash-lite" # エラーが出にくい安定モデル
+MODEL = "gemini/gemini-3.1-flash-lite" # エラーが出にくい安定モデル
 
 # --- 2. 状態（記憶）の初期化 ---
 if "messages" not in st.session_state:
