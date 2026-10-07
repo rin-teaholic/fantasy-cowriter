@@ -1,22 +1,35 @@
 import os
 import time
-
-# --- タイムゾーンを日本時間(JST)に設定 ---
-os.environ['TZ'] = 'Asia/Tokyo'
-try:
-    time.tzset()
-except AttributeError:
-    pass  # Windows（ローカルPC）でのエラー回避用
-
 import streamlit as st
-from crewai import Agent, Task, Crew, Process
-from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
+
+# --- 画面の基本設定 ---
+st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
+
+# --- パスワード保護機能 ---
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+
+    if st.session_state.password_correct:
+        return True
+
+    st.title("🔒 ログイン")
+    pwd_input = st.text_input("パスワードを入力してください", type="password")
+    if st.button("ログイン"):
+        if pwd_input == st.secrets["APP_PASSWORD"]:
+            st.session_state.password_correct = True
+            st.rerun()
+        else:
+            st.error("パスワードが正しくありません")
+    return False
+
+if not check_password():
+    st.stop() # パスワードが合っていなければここで処理を停止
 
 # --- 0. 環境変数の設定 (Secretsから取得) ---
 os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 
-# --- 1. 画面の基本設定 ---
-st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
+# --- 1. メイン画面のタイトル表示 ---
 st.title("✍️ Fantasy Co-Writer")
 
 DOCUMENT_ID = st.secrets["DOCUMENT_ID"]
