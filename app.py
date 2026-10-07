@@ -77,7 +77,22 @@ if user_input:
 
             # パターンC: 具体案の作成・修正指示
             else:
-                task = Task(description=f"既存設定:\n{st.session_state.doc_content[:3000]}\n\nユーザーの指示:\n{user_input}\n\n（前回までのやり取りでの修正指示なら、それに従って直してください）\n具体的で魅力的な設定案を作成してください。", expected_output="詳細な設定案", agent=idea_generator)
+                # これまでの会話の流れ（直近の4メッセージ分）をAIに教えるための準備
+                history_text = ""
+                for msg in st.session_state.messages[-5:-1]:
+                    speaker = "ユーザー" if msg["role"] == "user" else "AI"
+                    history_text += f"【{speaker}】\n{msg['content']}\n\n"
+
+                task = Task(
+                    description=(
+                        f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n"
+                        f"直近の会話の流れ:\n{history_text}\n"
+                        f"ユーザーの最新の指示:\n{user_input}\n\n"
+                        f"上記の会話の流れを踏まえて、具体的で魅力的な設定案を作成、または修正してください。"
+                    ), 
+                    expected_output="詳細な設定案", 
+                    agent=idea_generator
+                )
                 result = Crew(agents=[idea_generator], tasks=[task], process=Process.sequential).kickoff()
                 st.session_state.current_draft = result.raw
                 
