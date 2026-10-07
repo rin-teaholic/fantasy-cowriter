@@ -1,4 +1,13 @@
 import os
+import time
+
+# --- タイムゾーンを日本時間(JST)に設定 ---
+os.environ['TZ'] = 'Asia/Tokyo'
+try:
+    time.tzset()
+except AttributeError:
+    pass  # Windows（ローカルPC）でのエラー回避用
+
 import streamlit as st
 from crewai import Agent, Task, Crew, Process
 from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
