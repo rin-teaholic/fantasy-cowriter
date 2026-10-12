@@ -52,8 +52,30 @@ def init_tools():
 
 read_tool, append_tool = init_tools()
 
-director = Agent(role="進行役ディレクター", goal="ユーザーと対話して次に深掘りすべき設定のテーマを提案する", backstory="優秀な編集者。", llm=MODEL, verbose=False)
-idea_generator = Agent(role="アイデアデザイナー", goal="ユーザーの指示に基づいて具体的な設定案を作成・修正する", backstory="設定の専門家。", llm=MODEL, verbose=False)
+director = Agent(
+    role="進行役ディレクター", 
+    goal="ユーザーと対話して次に深掘りすべき設定のテーマを提案する", 
+    backstory="優秀な編集者。", 
+    llm=MODEL, 
+    verbose=False
+)
+
+idea_generator = Agent(
+    role="アイデアデザイナー", 
+    goal="ユーザーの指示に基づいて具体的な設定案の初期ドラフトを作成・修正する", 
+    backstory="発想力豊かな設定の専門家。自由で魅力的なアイデアを生み出す。", 
+    llm=MODEL, 
+    verbose=False
+)
+
+# ★ 新規追加: 設定監修・校閲エージェント
+checker = Agent(
+    role="設定監修・校閲エージェント",
+    goal="提案された設定案の言語的表現・ニュアンスの適切さを検証し、既存設定との矛盾を解消して最終案を完成させる",
+    backstory="ファンタジー世界観の整合性と多言語・文化表現に精通したベテラン校閲者。細かな設定の矛盾を見逃さず、より具体的にブラッシュアップする。",
+    llm=MODEL,
+    verbose=False
+)
 
 # ドキュメントの初回読み込み
 if not st.session_state.doc_content:
@@ -74,7 +96,7 @@ if user_input:
         st.markdown(user_input)
 
     with st.chat_message("assistant"):
-        with st.spinner("AIが思考中...（数秒〜数十秒かかります）"):
+        with st.spinner("AIチームが思考・検証中...（数秒〜数十秒かかります）"):
             # パターンA: 保存の指示
             if user_input.lower() in ['y', 'ok', 'はい', '保存', '保存して']:
                 if st.session_state.current_draft:
@@ -99,25 +121,46 @@ if user_input:
                 st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
 
-            # パターンC: 具体案の作成・修正指示
+            # パターンC: 具体案の作成・検証・校閲指示（2ステップ処理）
             else:
-                # これまでの会話の流れ（直近の4メッセージ分）をAIに教えるための準備
                 history_text = ""
                 for msg in st.session_state.messages[-5:-1]:
                     speaker = "ユーザー" if msg["role"] == "user" else "AI"
                     history_text += f"【{speaker}】\n{msg['content']}\n\n"
 
-                task = Task(
+                # Step 1: アイデアデザイナーが原案を作成
+                task_generate = Task(
                     description=(
                         f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n"
                         f"直近の会話の流れ:\n{history_text}\n"
                         f"ユーザーの最新の指示:\n{user_input}\n\n"
-                        f"上記の会話の流れを踏まえて、具体的で魅力的な設定案を作成、または修正してください。"
+                        f"上記の会話の流れを踏まえて、具体的で魅力的な設定案の初期ドラフトを作成してください。"
                     ), 
-                    expected_output="詳細な設定案", 
+                    expected_output="設定案の初期ドラフト", 
                     agent=idea_generator
                 )
-                result = Crew(agents=[idea_generator], tasks=[task], process=Process.sequential).kickoff()
+
+                # Step 2: 校閲エージェントが言語・矛盾・解像度をチェックして完成させる
+                task_check = Task(
+                    description=(
+                        f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n"
+                        f"アイデアデザイナーが作成した初期ドラフトを受け取り、以下の基準でチェックおよび修正を行ってください：\n"
+                        f"1. 【言語・表現チェック】国ごとの使用言語（英語・ドイツ語等）や単語のニュアンス、固有名詞の響きが世界観に適切か精査し修正する。\n"
+                        f"2. 【設定の整合性】既存設定と矛盾している点がないか確認し、矛盾があれば整合性を取る。\n"
+                        f"3. 【解像度の向上】発動条件・コスト・リスク・視覚的イメージを具体化し、物語のフックとなる要素を加える。\n\n"
+                        f"修正・ブラッシュアップが完了した最終的な設定案のみを出力してください。"
+                    ),
+                    expected_output="チェック・修正済みの完成された設定案",
+                    agent=checker
+                )
+
+                # 2つのエージェントを順に実行
+                result = Crew(
+                    agents=[idea_generator, checker], 
+                    tasks=[task_generate, task_check], 
+                    process=Process.sequential
+                ).kickoff()
+
                 st.session_state.current_draft = result.raw
                 
                 reply = f"{result.raw}\n\n---\n**💡 この内容でドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もっとダークにして」のように入力してください）"
