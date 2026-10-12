@@ -10,19 +10,29 @@ from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
 # --- 画面の基本設定 ---
 st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
 
-# --- カスタムCSS（操作ヘッダーの固定 & テーマ連動背景） ---
+# --- カスタムCSS（操作ヘッダーの完全画面上部固定） ---
 st.markdown(
     """
     <style>
-        /* 上部固定ナビゲーションバー */
+        /* タイトル・チャットコンテンツが固定ヘッダーと被らないよう上部余白を確保 */
+        .main .block-container {
+            padding-top: 6rem !important;
+        }
+        
+        /* 操作用ヘッダーを画面上部に完全固定 */
         div[data-key="top_nav"] {
-            position: sticky;
-            top: 2.5rem;
-            z-index: 999;
-            background-color: var(--background-color);
-            padding-top: 0.5rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+            position: fixed !important;
+            top: 3.5rem !important;
+            left: 0 !important;
+            right: 0 !important;
+            margin: 0 auto !important;
+            max-width: 730px !important;
+            width: 100% !important;
+            z-index: 99999 !important;
+            background-color: var(--background-color) !important;
+            padding: 0.5rem 1rem !important;
+            border-bottom: 1px solid rgba(128, 128, 128, 0.2) !important;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08);
         }
     </style>
     """,
@@ -133,7 +143,7 @@ if st.session_state.selected_mode is None:
     st.stop()
 
 # ==========================================
-# 2. モード選択後：チャット画面（固定ヘッダー）
+# 2. モード選択後：チャット画面（常時固定ヘッダー）
 # ==========================================
 with st.container(key="top_nav"):
     mode_col, update_col, reset_col = st.columns([3, 2, 2])
