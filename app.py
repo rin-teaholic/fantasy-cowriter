@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 from crewai import Task, Crew, Process
 from auth import check_password
 from agents import get_agents
@@ -8,6 +9,23 @@ from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
 
 # --- 画面の基本設定 ---
 st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
+
+# 自動スクロール用JavaScript関数
+def scroll_to_bottom():
+    components.html(
+        """
+        <script>
+            var mainSection = window.parent.document.querySelector('section.main');
+            if (mainSection) {
+                mainSection.scrollTo({
+                    top: mainSection.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }
+        </script>
+        """,
+        height=0,
+    )
 
 # --- パスワード保護機能 ---
 if not check_password():
@@ -56,7 +74,6 @@ if st.session_state.selected_mode is None:
         if st.button("🛠️ 設定構築モード\n\n(世界観・国家・魔法・言語の作成)", use_container_width=True):
             st.session_state.selected_mode = "🛠️ 設定構築モード"
             with st.spinner("ディレクターが設定ドキュメントを読み込み、提案を準備中..."):
-                # 最初のディレクタープロンプトを実行
                 proposal = run_setting_proposal(agents, st.session_state.doc_content)
                 initial_msg = (
                     "👋 **ディレクターです！設定構築モードを開始します。**\n\n"
@@ -72,7 +89,6 @@ if st.session_state.selected_mode is None:
         if st.button("📖 小説執筆モード\n\n(本文・シーン・対話の執筆)", use_container_width=True):
             st.session_state.selected_mode = "📖 小説執筆モード"
             with st.spinner("ディレクターが執筆の切り口を準備中..."):
-                # 小説モード用のディレクタータスクを実行
                 director = agents["director"]
                 task = Task(
                     description=(
@@ -93,25 +109,22 @@ if st.session_state.selected_mode is None:
                 st.session_state.messages.append({"role": "assistant", "content": initial_msg})
             st.rerun()
 
-    st.stop() # モードが選ばれるまでこれ以降のUIは非表示
+    st.stop()
 
 # ==========================================
 # 2. モード選択後：チャット画面
 # ==========================================
-# カラムを3つに分割し、ボタンを横並びに配置
 mode_col, update_col, reset_col = st.columns([4, 1.5, 1.5])
 with mode_col:
     st.info(f"**現在のモード:** {st.session_state.selected_mode}")
 
 with update_col:
-    # ドキュメントの再読み込みボタン
     if st.button("📄 最新化", help="Googleドキュメントの最新状態を読み込み直します", use_container_width=True):
         with st.spinner("ドキュメントを再読み込み中..."):
             st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
-        st.toast("✅ ドキュメントを最新状態に更新しました！") # 画面下部にポップアップ通知
+        st.toast("✅ ドキュメントを最新状態に更新しました！")
 
 with reset_col:
-    # モード切替ボタン
     if st.button("🔄 切替", help="モード選択画面に戻ります", use_container_width=True):
         st.session_state.selected_mode = None
         st.session_state.messages = []
@@ -123,9 +136,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# ==========================================
 # ユーザー入力エリア（スマホでの改行対応）
-# ==========================================
 with st.form(key="chat_form", clear_on_submit=True):
     user_input_raw = st.text_area(
         label="メッセージ入力",
@@ -135,13 +146,16 @@ with st.form(key="chat_form", clear_on_submit=True):
     )
     submit_btn = st.form_submit_button("📤 送信", type="primary", use_container_width=True)
 
-# 送信ボタンが押され、かつ文字が入力されている場合のみ処理
+# 送信処理
 if submit_btn and user_input_raw.strip():
     user_input = user_input_raw.strip()
     
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
+
+    # 自分のメッセージ送信時に最下部へスクロール
+    scroll_to_bottom()
 
     with st.chat_message("assistant"):
         with st.spinner("AIチームが作業中..."):
@@ -189,3 +203,6 @@ if submit_btn and user_input_raw.strip():
                 
                 st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
+
+    # AIの返答が出力された後にも最下部へスクロール
+    scroll_to_bottom()
