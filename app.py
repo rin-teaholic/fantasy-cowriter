@@ -10,31 +10,45 @@ from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
 # --- 画面の基本設定 ---
 st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
 
-# --- カスタムCSS（操作ヘッダーの完全画面上部固定） ---
+# --- カスタムCSS & JS（操作ヘッダーをスクロール枠から脱出させて画面最上部に完全固定） ---
 st.markdown(
     """
     <style>
-        /* タイトル・チャットコンテンツが固定ヘッダーと被らないよう上部余白を確保 */
-        .main .block-container {
-            padding-top: 6rem !important;
-        }
-        
-        /* 操作用ヘッダーを画面上部に完全固定 */
-        div[data-key="top_nav"] {
+        /* 固定ナビバーのスタイリング */
+        .custom-sticky-nav {
             position: fixed !important;
-            top: 3.5rem !important;
+            top: 2.875rem !important; /* Streamlit標準ヘッダーの直下 */
             left: 0 !important;
             right: 0 !important;
             margin: 0 auto !important;
             max-width: 730px !important;
             width: 100% !important;
-            z-index: 99999 !important;
+            z-index: 999999 !important;
             background-color: var(--background-color) !important;
             padding: 0.5rem 1rem !important;
             border-bottom: 1px solid rgba(128, 128, 128, 0.2) !important;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        /* チャットコンテンツが固定バーに隠れないよう上部余白を自動確保 */
+        .main .block-container {
+            padding-top: 5.5rem !important;
         }
     </style>
+    <script>
+        // ボタンバーをスクロール枠(section.main)から脱出させて画面最前面(.stApp)に移動固定する
+        function relocateNav() {
+            var nav = window.parent.document.querySelector('div[data-key="top_nav"]');
+            var app = window.parent.document.querySelector('.stApp');
+            if (nav && app && nav.parentElement !== app) {
+                nav.classList.add('custom-sticky-nav');
+                app.appendChild(nav);
+            }
+        }
+        // 描画タイミングに合わせて実行
+        setTimeout(relocateNav, 100);
+        setTimeout(relocateNav, 500);
+        setTimeout(relocateNav, 1000);
+    </script>
     """,
     unsafe_allow_html=True,
 )
@@ -143,7 +157,7 @@ if st.session_state.selected_mode is None:
     st.stop()
 
 # ==========================================
-# 2. モード選択後：チャット画面（常時固定ヘッダー）
+# 2. モード選択後：チャット画面（脱出固定ヘッダー）
 # ==========================================
 with st.container(key="top_nav"):
     mode_col, update_col, reset_col = st.columns([3, 2, 2])
@@ -169,7 +183,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --- AI返答処理（生成フラグがTrueの場合に描画して履歴追加） ---
+# --- AI返答処理 ---
 if st.session_state.generating_response:
     with st.chat_message("assistant"):
         with st.spinner("AIチームが作業中..."):
@@ -216,7 +230,7 @@ if st.session_state.generating_response:
             scroll_to_bottom()
             st.rerun()
 
-# --- ユーザー入力エリア（常に最下部に描画される） ---
+# --- ユーザー入力エリア（常に最下部） ---
 with st.form(key="chat_form", clear_on_submit=True):
     user_input_raw = st.text_area(
         label="メッセージ入力",
