@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+from crewai import Task, Crew, Process
 from auth import check_password
 from agents import get_agents
 from workflows import run_setting_proposal, run_setting_creation, run_novel_writing
@@ -17,18 +18,6 @@ os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 DOCUMENT_ID = st.secrets["DOCUMENT_ID"]
 MODEL = "gemini/gemini-3.5-flash-lite"
 
-# --- 画面UI ---
-st.title("✍️ Fantasy Co-Writer")
-mode = st.radio("🎯 動作モードを選択してください", ["🛠️ 設定構築モード", "📖 小説執筆モード"], horizontal=True)
-
-# --- 状態の初期化 ---
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "こんにちは！Co-Writerチームです。\n上部でモードを選んでから話しかけてください。"}]
-if "doc_content" not in st.session_state:
-    st.session_state.doc_content = ""
-if "current_draft" not in st.session_state:
-    st.session_state.current_draft = ""
-
 # --- ツールとエージェントの準備 ---
 @st.cache_resource
 def init_tools():
@@ -37,12 +26,89 @@ def init_tools():
 read_tool, append_tool = init_tools()
 agents = get_agents(MODEL)
 
-# 初回読み込み
+# --- セッション状態の初期化 ---
+if "selected_mode" not in st.session_state:
+    st.session_state.selected_mode = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "doc_content" not in st.session_state:
+    st.session_state.doc_content = ""
+if "current_draft" not in st.session_state:
+    st.session_state.current_draft = ""
+
+# 初回ドキュメント読み込み
 if not st.session_state.doc_content:
     with st.spinner("Googleドキュメントを読み込み中..."):
         st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
 
-# チャット描画
+# --- タイトルヘッダー ---
+st.title("✍️ Fantasy Co-Writer")
+
+# ==========================================
+# 1. モード未選択時：タップ選択画面
+# ==========================================
+if st.session_state.selected_mode is None:
+    st.write("### どちらの作業を行いますか？ タップして選択してください")
+    col1, col2 = st.columns(2)
+
+    # ボタン1: 設定構築モード
+    with col1:
+        if st.button("🛠️ 設定構築モード\n\n(世界観・国家・魔法・言語の作成)", use_container_width=True):
+            st.session_state.selected_mode = "🛠️ 設定構築モード"
+            with st.spinner("ディレクターが設定ドキュメントを読み込み、提案を準備中..."):
+                # 最初のディレクタープロンプトを実行
+                proposal = run_setting_proposal(agents, st.session_state.doc_content)
+                initial_msg = (
+                    "👋 **ディレクターです！設定構築モードを開始します。**\n\n"
+                    "既存のドキュメントを踏まえ、次に深掘りすべきテーマ案をまとめました：\n\n"
+                    f"{proposal}\n\n---\n"
+                    "気になるテーマの番号を入力するか、具体的に詰めたい設定を教えてください！"
+                )
+                st.session_state.messages.append({"role": "assistant", "content": initial_msg})
+            st.rerun()
+
+    # ボタン2: 小説執筆モード
+    with col2:
+        if st.button("📖 小説執筆モード\n\n(本文・シーン・対話の執筆)", use_container_width=True):
+            st.session_state.selected_mode = "📖 小説執筆モード"
+            with st.spinner("ディレクターが執筆の切り口を準備中..."):
+                # 小説モード用のディレクタータスクを実行
+                director = agents["director"]
+                task = Task(
+                    description=(
+                        f"【既存設定】\n{st.session_state.doc_content[:3000]}...\n\n"
+                        f"上記の設定を踏まえ、小説本文の執筆を開始するにあたって、おすすめのシーンやエピソードの切り口を3〜4つ提案してください。"
+                    ),
+                    expected_output="シーン・エピソードの候補リスト",
+                    agent=director
+                )
+                result = Crew(agents=[director], tasks=[task], process=Process.sequential).kickoff()
+                
+                initial_msg = (
+                    "👋 **ディレクターです！小説執筆モードを開始します。**\n\n"
+                    "既存の世界観・設定をベースに、執筆を始めるおすすめのシーンをいくつかピックアップしました：\n\n"
+                    f"{result.raw}\n\n---\n"
+                    "書きたいシーンや指示（例：『1のプロローグを書いて』『主人公とライバルの対峙シーン』など）を入力してください！"
+                )
+                st.session_state.messages.append({"role": "assistant", "content": initial_msg})
+            st.rerun()
+
+    st.stop() # モードが選ばれるまでこれ以降のUIは非表示
+
+# ==========================================
+# 2. モード選択後：チャット画面
+# ==========================================
+mode_col, reset_col = st.columns([4, 1])
+with mode_col:
+    st.info(f"**現在のモード:** {st.session_state.selected_mode}")
+with reset_col:
+    if st.button("🔄 切替", help="モード選択画面に戻ります"):
+        st.session_state.selected_mode = None
+        st.session_state.messages = []
+        st.session_state.current_draft = ""
+        st.rerun()
+
+# チャット履歴の表示
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -55,20 +121,20 @@ if user_input:
         st.markdown(user_input)
 
     with st.chat_message("assistant"):
-        with st.spinner(f"{mode} でAIチームが思考中..."):
+        with st.spinner("AIチームが作業中..."):
             
             # 【共通処理】保存指示の場合
             if user_input.lower() in ['y', 'ok', 'はい', '保存', '保存して']:
                 if st.session_state.current_draft:
-                    target_tab = "co_writer_crewによる追加設定" if "設定" in mode else "co_writer_crewによる小説本文"
-                    prefix = "■ 追加設定" if "設定" in mode else "■ 小説本文"
+                    target_tab = "co_writer_crewによる追加設定" if "設定" in st.session_state.selected_mode else "co_writer_crewによる小説本文"
+                    prefix = "■ 追加設定" if "設定" in st.session_state.selected_mode else "■ 小説本文"
                     
                     append_tool._run(
                         document_id=DOCUMENT_ID,
                         text=f"{prefix}\n{st.session_state.current_draft}",
                         target_tab_title=target_tab
                     )
-                    reply = f"🎉 ドキュメントに保存しました！（保存先タブ: {target_tab}）\n\n次に進めますか？"
+                    reply = f"🎉 ドキュメントに保存しました！（保存先タブ: `{target_tab}`）\n\n次に進める内容を入力してください。"
                     st.session_state.doc_content += f"\n\n{st.session_state.current_draft}"
                     st.session_state.current_draft = ""
                 else:
@@ -77,8 +143,8 @@ if user_input:
                 st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
 
-            # 🛠️ モード1: 設定構築モード
-            elif "設定" in mode:
+            # 🛠️ 設定構築モード
+            elif "設定" in st.session_state.selected_mode:
                 if "提案" in user_input or ("テーマ" in user_input and len(user_input) < 15):
                     raw_result = run_setting_proposal(agents, st.session_state.doc_content)
                     reply = f"【ディレクターからの提案】\n{raw_result}"
@@ -91,12 +157,12 @@ if user_input:
                 st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
 
-            # 📖 モード2: 小説執筆モード
+            # 📖 小説執筆モード
             else:
                 history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
                 raw_result = run_novel_writing(agents, st.session_state.doc_content, history_text, user_input)
                 st.session_state.current_draft = raw_result
-                reply = f"{raw_result}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し会話を増やして」のように指示してください）"
+                reply = f"{raw_result}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し描写を増やして」のように指示してください）"
                 
                 st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
