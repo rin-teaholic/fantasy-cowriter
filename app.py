@@ -10,49 +10,6 @@ from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
 # --- 画面の基本設定 ---
 st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
 
-# --- カスタムCSS & JS（操作ヘッダーをスクロール枠から脱出させて画面最上部に完全固定） ---
-st.markdown(
-    """
-    <style>
-        /* 固定ナビバーのスタイリング */
-        .custom-sticky-nav {
-            position: fixed !important;
-            top: 2.875rem !important; /* Streamlit標準ヘッダーの直下 */
-            left: 0 !important;
-            right: 0 !important;
-            margin: 0 auto !important;
-            max-width: 730px !important;
-            width: 100% !important;
-            z-index: 999999 !important;
-            background-color: var(--background-color) !important;
-            padding: 0.5rem 1rem !important;
-            border-bottom: 1px solid rgba(128, 128, 128, 0.2) !important;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        }
-        /* チャットコンテンツが固定バーに隠れないよう上部余白を自動確保 */
-        .main .block-container {
-            padding-top: 5.5rem !important;
-        }
-    </style>
-    <script>
-        // ボタンバーをスクロール枠(section.main)から脱出させて画面最前面(.stApp)に移動固定する
-        function relocateNav() {
-            var nav = window.parent.document.querySelector('div[data-key="top_nav"]');
-            var app = window.parent.document.querySelector('.stApp');
-            if (nav && app && nav.parentElement !== app) {
-                nav.classList.add('custom-sticky-nav');
-                app.appendChild(nav);
-            }
-        }
-        // 描画タイミングに合わせて実行
-        setTimeout(relocateNav, 100);
-        setTimeout(relocateNav, 500);
-        setTimeout(relocateNav, 1000);
-    </script>
-    """,
-    unsafe_allow_html=True,
-)
-
 # 自動スクロール用JavaScript関数
 def scroll_to_bottom():
     components.html(
@@ -157,26 +114,26 @@ if st.session_state.selected_mode is None:
     st.stop()
 
 # ==========================================
-# 2. モード選択後：チャット画面（脱出固定ヘッダー）
+# 2. モード選択後：チャット画面
 # ==========================================
-with st.container(key="top_nav"):
-    mode_col, update_col, reset_col = st.columns([3, 2, 2])
-    with mode_col:
-        st.info(f"**現在のモード:** {st.session_state.selected_mode}")
+# 上部操作ナビゲーション（標準配置）
+mode_col, update_col, reset_col = st.columns([3, 2, 2])
+with mode_col:
+    st.info(f"**現在のモード:** {st.session_state.selected_mode}")
 
-    with update_col:
-        if st.button("📄 ソース最新化", help="Googleドキュメントの最新状態を読み込み直します", use_container_width=True):
-            with st.spinner("ドキュメントを再読み込み中..."):
-                st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
-            st.toast("✅ ドキュメントを最新状態に更新しました！")
+with update_col:
+    if st.button("📄 ソース最新化", help="Googleドキュメントの最新状態を読み込み直します", use_container_width=True):
+        with st.spinner("ドキュメントを再読み込み中..."):
+            st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
+        st.toast("✅ ドキュメントを最新状態に更新しました！")
 
-    with reset_col:
-        if st.button("🔄 モード切替", help="モード選択画面に戻ります", use_container_width=True):
-            st.session_state.selected_mode = None
-            st.session_state.messages = []
-            st.session_state.current_draft = ""
-            st.session_state.generating_response = False
-            st.rerun()
+with reset_col:
+    if st.button("🔄 モード切替", help="モード選択画面に戻ります", use_container_width=True):
+        st.session_state.selected_mode = None
+        st.session_state.messages = []
+        st.session_state.current_draft = ""
+        st.session_state.generating_response = False
+        st.rerun()
 
 # チャット履歴の表示
 for msg in st.session_state.messages:
@@ -230,7 +187,7 @@ if st.session_state.generating_response:
             scroll_to_bottom()
             st.rerun()
 
-# --- ユーザー入力エリア（常に最下部） ---
+# --- ユーザー入力エリア（常に最下部に描画される） ---
 with st.form(key="chat_form", clear_on_submit=True):
     user_input_raw = st.text_area(
         label="メッセージ入力",
