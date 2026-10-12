@@ -34,7 +34,6 @@ os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 # --- 1. メイン画面のタイトルとモード選択 ---
 st.title("✍️ Fantasy Co-Writer")
 
-# 画面上部でモードを選択（スマホでも押しやすいラジオボタン）
 mode = st.radio(
     "🎯 動作モードを選択してください",
     ["🛠️ 設定構築モード", "📖 小説執筆モード"],
@@ -70,6 +69,13 @@ idea_generator = Agent(
     role="アイデアデザイナー", 
     goal="ユーザーの指示に基づいて具体的な設定案の初期ドラフトを作成・修正する", 
     backstory="発想力豊かな設定の専門家。自由で魅力的なアイデアを生み出す。", 
+    llm=MODEL, verbose=False
+)
+# ★ 新規追加: 歴史・地政学・軍略監修エージェント
+tactics_supervisor = Agent(
+    role="歴史・地政学・軍略監修エージェント",
+    goal="設定やシナリオを歴史、地政学、政治、軍事戦略の観点から検証し、知識のある読者が読んでも違和感のないリアリティと深みを持たせる",
+    backstory="現実の歴史、国家間の政治力学、地政学、古今東西の戦史・軍略に精通した専門家。ファンタジー世界であっても「なぜその政治体制になるのか」「その地形ならどう軍隊を動かすか」「どうすればこのピンチを覆せるか」といった現実的なロジックを重視し、過去の史実（逆転の戦術や政治的駆け引き）の知識を応用して設定に圧倒的な説得力を与える。",
     llm=MODEL, verbose=False
 )
 checker = Agent(
@@ -111,7 +117,7 @@ if user_input:
         st.markdown(user_input)
 
     with st.chat_message("assistant"):
-        with st.spinner(f"{mode} でAIチームが思考中..."):
+        with st.spinner(f"{mode} でAIチームが思考中...（複雑な検証を行うため少し時間がかかります）"):
             
             # 【共通処理】保存指示の場合
             if user_input.lower() in ['y', 'ok', 'はい', '保存', '保存して']:
@@ -146,22 +152,37 @@ if user_input:
                 else:
                     history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
                     
+                    # Step 1: アイデア出し
                     t1 = Task(
                         description=f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n会話の流れ:\n{history_text}\n最新指示:\n{user_input}\n\n具体的で魅力的な設定案の初期ドラフトを作成してください。",
                         expected_output="設定案の初期ドラフト", agent=idea_generator
                     )
+                    # Step 2: 歴史・政治・軍略チェック（新規追加）
                     t2 = Task(
                         description=(
                             f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n"
-                            f"初期ドラフトを受け取り、以下の基準でチェックおよび修正を行ってください：\n"
+                            f"初期ドラフトを受け取り、以下の基準で検証・修正してください：\n"
+                            f"1. 【政治・地政学のリアリティ】国家の成り立ち、資源や領土を巡る対立、為政者の判断が、現実の歴史や地政学の観点から見て不自然・ご都合主義になっていないか。\n"
+                            f"2. 【軍略・戦術の説得力】戦闘や危機的状況のシナリオが含まれる場合、地形や兵站、現実の戦史（過去の逆転劇や戦略）のロジックを取り入れ、知識層が読んでも納得する展開に深化させる。\n\n"
+                            f"歴史的・軍事的に説得力を持たせたドラフトを出力してください。"
+                        ),
+                        expected_output="歴史・軍略的チェックを経た設定案", agent=tactics_supervisor
+                    )
+                    # Step 3: 言語体系・整合性・最終校閲
+                    t3 = Task(
+                        description=(
+                            f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n"
+                            f"軍略チェックを経たドラフトを受け取り、以下の基準で最終チェックおよび修正を行ってください：\n"
                             f"1. 【言語体系・表現チェック】既存設定にある『ソースの言語体系』の記述を基準とし、国ごとの使用言語（英語・ドイツ語等）、単語のニュアンス、固有名詞の綴り・響きが世界観と整合しているか精査し補正する。\n"
                             f"2. 【設定の整合性】既存設定全体と矛盾している点がないか確認し、矛盾があれば整合性を取る。\n"
-                            f"3. 【解像度の向上】発動条件・コスト・リスク・視覚的イメージを具体化し、物語のフックとなる要素を加える。\n\n"
+                            f"3. 【解像度の向上】表現をより具体化し、物語のフックとなる要素を加える。\n\n"
                             f"修正・ブラッシュアップが完了した最終的な設定案のみを出力してください。"
                         ),
                         expected_output="チェック済みの完成設定案", agent=checker
                     )
-                    result = Crew(agents=[idea_generator, checker], tasks=[t1, t2], process=Process.sequential).kickoff()
+                    
+                    # 3つのエージェントを順次実行（強力なパイプライン）
+                    result = Crew(agents=[idea_generator, tactics_supervisor, checker], tasks=[t1, t2, t3], process=Process.sequential).kickoff()
                     st.session_state.current_draft = result.raw
                     
                     reply = f"{result.raw}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
@@ -172,7 +193,6 @@ if user_input:
             else:
                 history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
                 
-                # Step 1: 小説家が本文ドラフトを執筆
                 t1 = Task(
                     description=(
                         f"設定ドキュメント:\n{st.session_state.doc_content[:3000]}\n\n"
@@ -183,7 +203,6 @@ if user_input:
                     expected_output="小説本文の初稿ドラフト", agent=novel_writer
                 )
                 
-                # Step 2: 推敲エージェントが文体や描写をブラッシュアップ
                 t2 = Task(
                     description=(
                         f"設定ドキュメント:\n{st.session_state.doc_content[:3000]}\n\n"
