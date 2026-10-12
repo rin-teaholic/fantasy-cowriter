@@ -5,7 +5,7 @@ def run_setting_proposal(agents, doc_content):
     director = agents["director"]
     task = Task(
         description=(
-            f"【既存設定ドキュメント】\n{doc_content[:3000]}...\n\n"
+            f"【既存設定ドキュメント】\n{doc_content}\n\n"
             f"【指示】\n"
             f"上記の設定を踏まえ、世界観をより深掘りするために次に詰めるべきテーマ案を5つ提案してください。\n"
             f"各テーマには「なぜ今その設定が必要か（物語や世界観への効果）」を1行で添えてください。"
@@ -26,7 +26,7 @@ def run_setting_creation(agents, doc_content, history_text, user_input):
     # Step 1: アイデア出し
     t1 = Task(
         description=(
-            f"【既存設定ドキュメント】\n{doc_content[:3000]}\n\n"
+            f"【既存設定ドキュメント】\n{doc_content}\n\n"
             f"【会話の文脈】\n{history_text}\n"
             f"【ユーザー指示】\n{user_input}\n\n"
             f"【タスク】\n"
@@ -40,7 +40,7 @@ def run_setting_creation(agents, doc_content, history_text, user_input):
     # Step 2: 歴史・政治・地政学・軍略チェック
     t2 = Task(
         description=(
-            f"【既存設定ドキュメント】\n{doc_content[:3000]}\n\n"
+            f"【既存設定ドキュメント】\n{doc_content}\n\n"
             f"【初期ドラフト】\n受け取ったドラフトに対し、以下の観点で厳密なリアリティチェックと修正を行ってください：\n"
             f"1. 【地政学・政治】国家の経済基盤、領土・資源争い、為政者の動機に現実的な政治力学の整合性があるか。\n"
             f"2. 【軍略・兵站】戦闘・戦法・兵器が含まれる場合、地形、補給線（兵站）、過去の史実・戦史（有名な逆転劇や戦略）のロジックを取り入れているか。\n"
@@ -53,7 +53,7 @@ def run_setting_creation(agents, doc_content, history_text, user_input):
     # Step 3: 言語体系・ルール厳守・最終校閲
     t3 = Task(
         description=(
-            f"【既存設定ドキュメント】\n{doc_content[:3000]}\n\n"
+            f"【既存設定ドキュメント】\n{doc_content}\n\n"
             f"【検証済みドラフト】\n受け取ったドラフトを最終校閲し、以下のルールとフォーマットを**厳格に適用して**完成版を出力してください：\n\n"
             f"【★言語表記の絶対ルール】\n"
             f"設定内に登場する作中用語や固有名詞、外国語単語については、**必ず日本語訳と英語訳をセットで記述**してください。\n"
@@ -86,7 +86,7 @@ def run_novel_writing(agents, doc_content, history_text, user_input):
     
     t1 = Task(
         description=(
-            f"【設定ドキュメント】\n{doc_content[:3000]}\n\n"
+            f"【設定ドキュメント】\n{doc_content}\n\n"
             f"【会話の文脈】\n{history_text}\n"
             f"【執筆指示】\n{user_input}\n\n"
             f"【タスク】\n"
