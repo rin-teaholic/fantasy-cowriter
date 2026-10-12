@@ -123,9 +123,22 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# ユーザー入力
-user_input = st.chat_input("メッセージを入力...")
-if user_input:
+# ==========================================
+# ユーザー入力エリア（スマホでの改行対応）
+# ==========================================
+with st.form(key="chat_form", clear_on_submit=True):
+    user_input_raw = st.text_area(
+        label="メッセージ入力",
+        placeholder="メッセージを入力してください（キーボードの改行で改行できます）",
+        height=100,
+        label_visibility="collapsed"
+    )
+    submit_btn = st.form_submit_button("📤 送信", type="primary", use_container_width=True)
+
+# 送信ボタンが押され、かつ文字が入力されている場合のみ処理
+if submit_btn and user_input_raw.strip():
+    user_input = user_input_raw.strip()
+    
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
