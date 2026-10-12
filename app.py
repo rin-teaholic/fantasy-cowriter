@@ -34,7 +34,7 @@ os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 # --- 1. メイン画面のタイトルとモード選択 ---
 st.title("✍️ Fantasy Co-Writer")
 
-# ★ 画面上部でモードを選択（スマホでも押しやすいラジオボタン）
+# 画面上部でモードを選択（スマホでも押しやすいラジオボタン）
 mode = st.radio(
     "🎯 動作モードを選択してください",
     ["🛠️ 設定構築モード", "📖 小説執筆モード"],
@@ -75,7 +75,7 @@ idea_generator = Agent(
 checker = Agent(
     role="設定監修・校閲エージェント",
     goal="提案された設定案の言語的表現・ニュアンスの適切さを検証し、既存設定との矛盾を解消して最終案を完成させる",
-    backstory="ファンタジー世界観の整合性と多言語・文化表現に精通したベテラン校閲者。",
+    backstory="ファンタジー世界観の整合性と多言語・文化表現に精通したベテラン校閲者。既存ドキュメント内の『ソースの言語体系』を厳格に参照して言語表現や固有名詞を検証する。",
     llm=MODEL, verbose=False
 )
 
@@ -151,7 +151,14 @@ if user_input:
                         expected_output="設定案の初期ドラフト", agent=idea_generator
                     )
                     t2 = Task(
-                        description=f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n初期ドラフトの言語・ニュアンス、設定矛盾、解像度をチェックし、ブラッシュアップした完成設定案を出力してください。",
+                        description=(
+                            f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n"
+                            f"初期ドラフトを受け取り、以下の基準でチェックおよび修正を行ってください：\n"
+                            f"1. 【言語体系・表現チェック】既存設定にある『ソースの言語体系』の記述を基準とし、国ごとの使用言語（英語・ドイツ語等）、単語のニュアンス、固有名詞の綴り・響きが世界観と整合しているか精査し補正する。\n"
+                            f"2. 【設定の整合性】既存設定全体と矛盾している点がないか確認し、矛盾があれば整合性を取る。\n"
+                            f"3. 【解像度の向上】発動条件・コスト・リスク・視覚的イメージを具体化し、物語のフックとなる要素を加える。\n\n"
+                            f"修正・ブラッシュアップが完了した最終的な設定案のみを出力してください。"
+                        ),
                         expected_output="チェック済みの完成設定案", agent=checker
                     )
                     result = Crew(agents=[idea_generator, checker], tasks=[t1, t2], process=Process.sequential).kickoff()
@@ -171,7 +178,7 @@ if user_input:
                         f"設定ドキュメント:\n{st.session_state.doc_content[:3000]}\n\n"
                         f"会話の流れ:\n{history_text}\n"
                         f"ユーザーの執筆指示:\n{user_input}\n\n"
-                        f"上記の設定と指示を遵守し、小説の本文（またはシーン・会話）を書き上げてください。"
+                        f"上記の設定（特に『ソースの言語体系』に沿った名称・用語）と指示を遵守し、小説の本文（またはシーン・会話）を書き上げてください。"
                     ),
                     expected_output="小説本文の初稿ドラフト", agent=novel_writer
                 )
@@ -180,7 +187,7 @@ if user_input:
                 t2 = Task(
                     description=(
                         f"設定ドキュメント:\n{st.session_state.doc_content[:3000]}\n\n"
-                        f"小説家が書き上げた初稿ドラフトを受け取り、情景描写・感情表現・文体のリズム・会話のテンポを磨き上げ、圧倒的に魅力的な小説本文に完成させてください。"
+                        f"小説家が書き上げた初稿ドラフトを受け取り、情景描写・感情表現・文体のリズム・会話のテンポ・言語体系に沿った用語表現を磨き上げ、魅力的な小説本文に完成させてください。"
                     ),
                     expected_output="推敲済みの小説本文", agent=prose_editor
                 )
