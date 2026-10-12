@@ -10,16 +10,16 @@ from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
 # --- 画面の基本設定 ---
 st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
 
-# --- カスタムCSS（操作用ヘッダーを画面上部に追従固定） ---
+# --- カスタムCSS（操作ヘッダーの固定 & テーマ連動背景） ---
 st.markdown(
     """
     <style>
-        /* 操作用ヘッダー（ボタン群のカラム）を画面上部に固定 */
-        div[data-testid="stHorizontalBlock"]:has(button) {
+        /* 上部固定ナビゲーションバー */
+        div[data-key="top_nav"] {
             position: sticky;
             top: 2.5rem;
             z-index: 999;
-            background-color: var(--background-color, #0e1117);
+            background-color: var(--background-color);
             padding-top: 0.5rem;
             padding-bottom: 0.5rem;
             border-bottom: 1px solid rgba(128, 128, 128, 0.2);
@@ -72,6 +72,8 @@ if "doc_content" not in st.session_state:
     st.session_state.doc_content = ""
 if "current_draft" not in st.session_state:
     st.session_state.current_draft = ""
+if "generating_response" not in st.session_state:
+    st.session_state.generating_response = False
 
 # 初回ドキュメント読み込み
 if not st.session_state.doc_content:
@@ -131,52 +133,37 @@ if st.session_state.selected_mode is None:
     st.stop()
 
 # ==========================================
-# 2. モード選択後：チャット画面（上部追従ヘッダー）
+# 2. モード選択後：チャット画面（固定ヘッダー）
 # ==========================================
-mode_col, update_col, reset_col = st.columns([3, 2, 2])
-with mode_col:
-    st.info(f"**現在のモード:** {st.session_state.selected_mode}")
+with st.container(key="top_nav"):
+    mode_col, update_col, reset_col = st.columns([3, 2, 2])
+    with mode_col:
+        st.info(f"**現在のモード:** {st.session_state.selected_mode}")
 
-with update_col:
-    if st.button("📄 ソース最新化", help="Googleドキュメントの最新状態を読み込み直します", use_container_width=True):
-        with st.spinner("ドキュメントを再読み込み中..."):
-            st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
-        st.toast("✅ ドキュメントを最新状態に更新しました！")
+    with update_col:
+        if st.button("📄 ソース最新化", help="Googleドキュメントの最新状態を読み込み直します", use_container_width=True):
+            with st.spinner("ドキュメントを再読み込み中..."):
+                st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
+            st.toast("✅ ドキュメントを最新状態に更新しました！")
 
-with reset_col:
-    if st.button("🔄 モード切替", help="モード選択画面に戻ります", use_container_width=True):
-        st.session_state.selected_mode = None
-        st.session_state.messages = []
-        st.session_state.current_draft = ""
-        st.rerun()
+    with reset_col:
+        if st.button("🔄 モード切替", help="モード選択画面に戻ります", use_container_width=True):
+            st.session_state.selected_mode = None
+            st.session_state.messages = []
+            st.session_state.current_draft = ""
+            st.session_state.generating_response = False
+            st.rerun()
 
 # チャット履歴の表示
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# ユーザー入力エリア（スマホでの改行対応）
-with st.form(key="chat_form", clear_on_submit=True):
-    user_input_raw = st.text_area(
-        label="メッセージ入力",
-        placeholder="メッセージを入力してください（キーボードの改行で改行できます）",
-        height=100,
-        label_visibility="collapsed"
-    )
-    submit_btn = st.form_submit_button("📤 送信", type="primary", use_container_width=True)
-
-# 送信処理
-if submit_btn and user_input_raw.strip():
-    user_input = user_input_raw.strip()
-    
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
-
-    scroll_to_bottom()
-
+# --- AI返答処理（生成フラグがTrueの場合に描画して履歴追加） ---
+if st.session_state.generating_response:
     with st.chat_message("assistant"):
         with st.spinner("AIチームが作業中..."):
+            user_input = st.session_state.messages[-1]["content"]
             
             # 【共通処理】保存指示の場合
             if user_input.lower() in ['y', 'ok', 'はい', '保存', '保存して']:
@@ -194,9 +181,6 @@ if submit_btn and user_input_raw.strip():
                     st.session_state.current_draft = ""
                 else:
                     reply = "保存する文章がまだありません。"
-                
-                st.markdown(reply)
-                st.session_state.messages.append({"role": "assistant", "content": reply})
 
             # 🛠️ 設定構築モード
             elif "設定" in st.session_state.selected_mode:
@@ -208,9 +192,6 @@ if submit_btn and user_input_raw.strip():
                     raw_result = run_setting_creation(agents, st.session_state.doc_content, history_text, user_input)
                     st.session_state.current_draft = raw_result
                     reply = f"{raw_result}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
-                
-                st.markdown(reply)
-                st.session_state.messages.append({"role": "assistant", "content": reply})
 
             # 📖 小説執筆モード
             else:
@@ -218,8 +199,27 @@ if submit_btn and user_input_raw.strip():
                 raw_result = run_novel_writing(agents, st.session_state.doc_content, history_text, user_input)
                 st.session_state.current_draft = raw_result
                 reply = f"{raw_result}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し描写を増やして」のように指示してください）"
-                
-                st.markdown(reply)
-                st.session_state.messages.append({"role": "assistant", "content": reply})
 
+            st.markdown(reply)
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+            st.session_state.generating_response = False
+            scroll_to_bottom()
+            st.rerun()
+
+# --- ユーザー入力エリア（常に最下部に描画される） ---
+with st.form(key="chat_form", clear_on_submit=True):
+    user_input_raw = st.text_area(
+        label="メッセージ入力",
+        placeholder="メッセージを入力してください（キーボードの改行で改行できます）",
+        height=100,
+        label_visibility="collapsed"
+    )
+    submit_btn = st.form_submit_button("📤 送信", type="primary", use_container_width=True)
+
+# 送信ボタンのアクション
+if submit_btn and user_input_raw.strip():
+    user_input = user_input_raw.strip()
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    st.session_state.generating_response = True
     scroll_to_bottom()
+    st.rerun()
