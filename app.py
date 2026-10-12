@@ -1,49 +1,27 @@
 import os
-import time
 import streamlit as st
-from crewai import Agent, Task, Crew, Process
+from auth import check_password
+from agents import get_agents
+from workflows import run_setting_proposal, run_setting_creation, run_novel_writing
 from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
 
 # --- 画面の基本設定 ---
 st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
 
 # --- パスワード保護機能 ---
-def check_password():
-    if "password_correct" not in st.session_state:
-        st.session_state.password_correct = False
-
-    if st.session_state.password_correct:
-        return True
-
-    st.title("🔒 ログイン")
-    pwd_input = st.text_input("パスワードを入力してください", type="password")
-    if st.button("ログイン"):
-        if pwd_input == st.secrets["APP_PASSWORD"]:
-            st.session_state.password_correct = True
-            st.rerun()
-        else:
-            st.error("パスワードが正しくありません")
-    return False
-
 if not check_password():
-    st.stop() # パスワードが合っていなければここで処理を停止
+    st.stop()
 
-# --- 0. 環境変数の設定 (Secretsから取得) ---
+# --- 環境変数の設定 ---
 os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
-
-# --- 1. メイン画面のタイトルとモード選択 ---
-st.title("✍️ Fantasy Co-Writer")
-
-mode = st.radio(
-    "🎯 動作モードを選択してください",
-    ["🛠️ 設定構築モード", "📖 小説執筆モード"],
-    horizontal=True
-)
-
 DOCUMENT_ID = st.secrets["DOCUMENT_ID"]
-MODEL = "gemini/gemini-3.5-flash-lite" # 安定モデル
+MODEL = "gemini/gemini-3.5-flash-lite"
 
-# --- 2. 状態（記憶）の初期化 ---
+# --- 画面UI ---
+st.title("✍️ Fantasy Co-Writer")
+mode = st.radio("🎯 動作モードを選択してください", ["🛠️ 設定構築モード", "📖 小説執筆モード"], horizontal=True)
+
+# --- 状態の初期化 ---
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "こんにちは！Co-Writerチームです。\n上部でモードを選んでから話しかけてください。"}]
 if "doc_content" not in st.session_state:
@@ -51,65 +29,25 @@ if "doc_content" not in st.session_state:
 if "current_draft" not in st.session_state:
     st.session_state.current_draft = ""
 
-# --- 3. ツールとエージェントの準備 ---
+# --- ツールとエージェントの準備 ---
 @st.cache_resource
 def init_tools():
     return ReadGoogleDocTool(), AppendGoogleDocTool()
 
 read_tool, append_tool = init_tools()
+agents = get_agents(MODEL)
 
-# 【設定モード用エージェント】
-director = Agent(
-    role="進行役ディレクター", 
-    goal="ユーザーと対話して次に深掘りすべき設定のテーマを提案する", 
-    backstory="優秀な編集者。", 
-    llm=MODEL, verbose=False
-)
-idea_generator = Agent(
-    role="アイデアデザイナー", 
-    goal="ユーザーの指示に基づいて具体的な設定案の初期ドラフトを作成・修正する", 
-    backstory="発想力豊かな設定の専門家。自由で魅力的なアイデアを生み出す。", 
-    llm=MODEL, verbose=False
-)
-# ★ 新規追加: 歴史・地政学・軍略監修エージェント
-tactics_supervisor = Agent(
-    role="歴史・地政学・軍略監修エージェント",
-    goal="設定やシナリオを歴史、地政学、政治、軍事戦略の観点から検証し、知識のある読者が読んでも違和感のないリアリティと深みを持たせる",
-    backstory="現実の歴史、国家間の政治力学、地政学、古今東西の戦史・軍略に精通した専門家。ファンタジー世界であっても「なぜその政治体制になるのか」「その地形ならどう軍隊を動かすか」「どうすればこのピンチを覆せるか」といった現実的なロジックを重視し、過去の史実（逆転の戦術や政治的駆け引き）の知識を応用して設定に圧倒的な説得力を与える。",
-    llm=MODEL, verbose=False
-)
-checker = Agent(
-    role="設定監修・校閲エージェント",
-    goal="提案された設定案の言語的表現・ニュアンスの適切さを検証し、既存設定との矛盾を解消して最終案を完成させる",
-    backstory="ファンタジー世界観の整合性と多言語・文化表現に精通したベテラン校閲者。既存ドキュメント内の『ソースの言語体系』を厳格に参照して言語表現や固有名詞を検証する。",
-    llm=MODEL, verbose=False
-)
-
-# 【執筆モード用エージェント】
-novel_writer = Agent(
-    role="小説家・ライター",
-    goal="設定ドキュメントとユーザーの指示に基づき、情景描写や感情表現豊かな小説の本文・プロットを執筆する",
-    backstory="ファンタジー小説を得意とするプロ作家。キャラクターの台詞回しや世界観の描写に秀でている。",
-    llm=MODEL, verbose=False
-)
-prose_editor = Agent(
-    role="文章推敲・推稿エージェント",
-    goal="執筆された小説本文の文体・リズム・五感表現・会話のテンポを磨き上げ、魅力的な完成原稿にする",
-    backstory="文芸誌のベテラン文章エージェント。読者を惹きつけるテンポと描写の精緻化を行う。",
-    llm=MODEL, verbose=False
-)
-
-# ドキュメントの初回読み込み
+# 初回読み込み
 if not st.session_state.doc_content:
     with st.spinner("Googleドキュメントを読み込み中..."):
         st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
 
-# --- 4. チャット画面の描画 ---
+# チャット描画
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --- 5. ユーザーからの入力とAIの処理 ---
+# ユーザー入力
 user_input = st.chat_input("メッセージを入力...")
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -117,7 +55,7 @@ if user_input:
         st.markdown(user_input)
 
     with st.chat_message("assistant"):
-        with st.spinner(f"{mode} でAIチームが思考中...（複雑な検証を行うため少し時間がかかります）"):
+        with st.spinner(f"{mode} でAIチームが思考中..."):
             
             # 【共通処理】保存指示の場合
             if user_input.lower() in ['y', 'ok', 'はい', '保存', '保存して']:
@@ -125,7 +63,7 @@ if user_input:
                     target_tab = "co_writer_crewによる追加設定" if "設定" in mode else "co_writer_crewによる小説本文"
                     prefix = "■ 追加設定" if "設定" in mode else "■ 小説本文"
                     
-                    res = append_tool._run(
+                    append_tool._run(
                         document_id=DOCUMENT_ID,
                         text=f"{prefix}\n{st.session_state.current_draft}",
                         target_tab_title=target_tab
@@ -135,85 +73,30 @@ if user_input:
                     st.session_state.current_draft = ""
                 else:
                     reply = "保存する文章がまだありません。"
+                
                 st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
 
             # 🛠️ モード1: 設定構築モード
             elif "設定" in mode:
-                # テーマ提案指示
                 if "提案" in user_input or ("テーマ" in user_input and len(user_input) < 15):
-                    task = Task(description=f"以下の既存設定を踏まえ、次に設定を詰めるべきテーマ案を5つ提案して。\n\n{st.session_state.doc_content[:3000]}...", expected_output="テーマの選択肢", agent=director)
-                    result = Crew(agents=[director], tasks=[task], process=Process.sequential).kickoff()
-                    reply = f"【ディレクターからの提案】\n{result.raw}"
-                    st.markdown(reply)
-                    st.session_state.messages.append({"role": "assistant", "content": reply})
-                
-                # 具体的な設定作成・修正
+                    raw_result = run_setting_proposal(agents, st.session_state.doc_content)
+                    reply = f"【ディレクターからの提案】\n{raw_result}"
                 else:
                     history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
-                    
-                    # Step 1: アイデア出し
-                    t1 = Task(
-                        description=f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n会話の流れ:\n{history_text}\n最新指示:\n{user_input}\n\n具体的で魅力的な設定案の初期ドラフトを作成してください。",
-                        expected_output="設定案の初期ドラフト", agent=idea_generator
-                    )
-                    # Step 2: 歴史・政治・軍略チェック（新規追加）
-                    t2 = Task(
-                        description=(
-                            f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n"
-                            f"初期ドラフトを受け取り、以下の基準で検証・修正してください：\n"
-                            f"1. 【政治・地政学のリアリティ】国家の成り立ち、資源や領土を巡る対立、為政者の判断が、現実の歴史や地政学の観点から見て不自然・ご都合主義になっていないか。\n"
-                            f"2. 【軍略・戦術の説得力】戦闘や危機的状況のシナリオが含まれる場合、地形や兵站、現実の戦史（過去の逆転劇や戦略）のロジックを取り入れ、知識層が読んでも納得する展開に深化させる。\n\n"
-                            f"歴史的・軍事的に説得力を持たせたドラフトを出力してください。"
-                        ),
-                        expected_output="歴史・軍略的チェックを経た設定案", agent=tactics_supervisor
-                    )
-                    # Step 3: 言語体系・整合性・最終校閲
-                    t3 = Task(
-                        description=(
-                            f"既存設定:\n{st.session_state.doc_content[:3000]}\n\n"
-                            f"軍略チェックを経たドラフトを受け取り、以下の基準で最終チェックおよび修正を行ってください：\n"
-                            f"1. 【言語体系・表現チェック】既存設定にある『ソースの言語体系』の記述を基準とし、国ごとの使用言語（英語・ドイツ語等）、単語のニュアンス、固有名詞の綴り・響きが世界観と整合しているか精査し補正する。\n"
-                            f"2. 【設定の整合性】既存設定全体と矛盾している点がないか確認し、矛盾があれば整合性を取る。\n"
-                            f"3. 【解像度の向上】表現をより具体化し、物語のフックとなる要素を加える。\n\n"
-                            f"修正・ブラッシュアップが完了した最終的な設定案のみを出力してください。"
-                        ),
-                        expected_output="チェック済みの完成設定案", agent=checker
-                    )
-                    
-                    # 3つのエージェントを順次実行（強力なパイプライン）
-                    result = Crew(agents=[idea_generator, tactics_supervisor, checker], tasks=[t1, t2, t3], process=Process.sequential).kickoff()
-                    st.session_state.current_draft = result.raw
-                    
-                    reply = f"{result.raw}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
-                    st.markdown(reply)
-                    st.session_state.messages.append({"role": "assistant", "content": reply})
+                    raw_result = run_setting_creation(agents, st.session_state.doc_content, history_text, user_input)
+                    st.session_state.current_draft = raw_result
+                    reply = f"{raw_result}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
+                
+                st.markdown(reply)
+                st.session_state.messages.append({"role": "assistant", "content": reply})
 
             # 📖 モード2: 小説執筆モード
             else:
                 history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
+                raw_result = run_novel_writing(agents, st.session_state.doc_content, history_text, user_input)
+                st.session_state.current_draft = raw_result
+                reply = f"{raw_result}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し会話を増やして」のように指示してください）"
                 
-                t1 = Task(
-                    description=(
-                        f"設定ドキュメント:\n{st.session_state.doc_content[:3000]}\n\n"
-                        f"会話の流れ:\n{history_text}\n"
-                        f"ユーザーの執筆指示:\n{user_input}\n\n"
-                        f"上記の設定（特に『ソースの言語体系』に沿った名称・用語）と指示を遵守し、小説の本文（またはシーン・会話）を書き上げてください。"
-                    ),
-                    expected_output="小説本文の初稿ドラフト", agent=novel_writer
-                )
-                
-                t2 = Task(
-                    description=(
-                        f"設定ドキュメント:\n{st.session_state.doc_content[:3000]}\n\n"
-                        f"小説家が書き上げた初稿ドラフトを受け取り、情景描写・感情表現・文体のリズム・会話のテンポ・言語体系に沿った用語表現を磨き上げ、魅力的な小説本文に完成させてください。"
-                    ),
-                    expected_output="推敲済みの小説本文", agent=prose_editor
-                )
-                
-                result = Crew(agents=[novel_writer, prose_editor], tasks=[t1, t2], process=Process.sequential).kickoff()
-                st.session_state.current_draft = result.raw
-                
-                reply = f"{result.raw}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し会話を増やして」のように指示してください）"
                 st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})

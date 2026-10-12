@@ -1,0 +1,29 @@
+{
+  "name": "co_writer_crew",
+  "process": "sequential",
+  "agents": [
+    "idea_generator",
+    "character_designer",
+    "plot_architect"
+  ],
+  "tasks": [
+    {
+      "name": "brainstorm_task",
+      "description": "1. ツール `read_google_doc` を呼び出し、Google ドキュメント (ID: 1XC6aifAEaWw1LHZ27zPzR1fEolnmpF7QNEfI8wvGeiw) の【全タブ】を読み込んでください。\n2. 既存設定と矛盾しない新しい世界観拡張案を考案してください。\n3. 考案した内容をツール `append_to_google_doc` で「co_writer_crewによる追加設定」タブの末尾に追記してください。",
+      "expected_output": "全タブの設定を踏まえた世界観拡張案と追記完了報告",
+      "agent": "idea_generator"
+    },
+    {
+      "name": "character_task",
+      "description": "1. 直前の `idea_generator` が読み込んだドキュメント内容と考案した世界観案を引き継ぎ、それに合った主人公とライバルの詳細設定を作成してください。（※ドキュメントの再読み込みは不要です）\n2. 作成した内容をツール `append_to_google_doc` で「co_writer_crewによる追加設定」タブの末尾に追記してください。",
+      "expected_output": "キャラクター詳細設定と追記完了報告",
+      "agent": "character_designer"
+    },
+    {
+      "name": "plot_task",
+      "description": "1. ここまでの世界観案とキャラクター設定を引き継ぎ、全3章構成のプロット案を作成してください。（※ドキュメントの再読み込みは不要です）\n2. 作成した内容をツール `append_to_google_doc` で「co_writer_crewによる追加設定」タブの末尾に追記してください。",
+      "expected_output": "全3章のプロット案と追記完了報告",
+      "agent": "plot_architect"
+    }
+  ]
+}
