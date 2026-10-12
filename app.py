@@ -10,6 +10,25 @@ from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
 # --- 画面の基本設定 ---
 st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
 
+# --- カスタムCSS（操作用ヘッダーを画面上部に追従固定） ---
+st.markdown(
+    """
+    <style>
+        /* 操作用ヘッダー（ボタン群のカラム）を画面上部に固定 */
+        div[data-testid="stHorizontalBlock"]:has(button) {
+            position: sticky;
+            top: 2.5rem;
+            z-index: 999;
+            background-color: var(--background-color, #0e1117);
+            padding-top: 0.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # 自動スクロール用JavaScript関数
 def scroll_to_bottom():
     components.html(
@@ -92,7 +111,7 @@ if st.session_state.selected_mode is None:
                 director = agents["director"]
                 task = Task(
                     description=(
-                        f"【既存設定】\n{st.session_state.doc_content[:3000]}...\n\n"
+                        f"【既存設定】\n{st.session_state.doc_content}...\n\n"
                         f"上記の設定を踏まえ、小説本文の執筆を開始するにあたって、おすすめのシーンやエピソードの切り口を3〜4つ提案してください。"
                     ),
                     expected_output="シーン・エピソードの候補リスト",
@@ -112,20 +131,20 @@ if st.session_state.selected_mode is None:
     st.stop()
 
 # ==========================================
-# 2. モード選択後：チャット画面
+# 2. モード選択後：チャット画面（上部追従ヘッダー）
 # ==========================================
-mode_col, update_col, reset_col = st.columns([4, 1.5, 1.5])
+mode_col, update_col, reset_col = st.columns([3, 2, 2])
 with mode_col:
     st.info(f"**現在のモード:** {st.session_state.selected_mode}")
 
 with update_col:
-    if st.button("📄 最新化", help="Googleドキュメントの最新状態を読み込み直します", use_container_width=True):
+    if st.button("📄 ソース最新化", help="Googleドキュメントの最新状態を読み込み直します", use_container_width=True):
         with st.spinner("ドキュメントを再読み込み中..."):
             st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
         st.toast("✅ ドキュメントを最新状態に更新しました！")
 
 with reset_col:
-    if st.button("🔄 切替", help="モード選択画面に戻ります", use_container_width=True):
+    if st.button("🔄 モード切替", help="モード選択画面に戻ります", use_container_width=True):
         st.session_state.selected_mode = None
         st.session_state.messages = []
         st.session_state.current_draft = ""
@@ -154,7 +173,6 @@ if submit_btn and user_input_raw.strip():
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # 自分のメッセージ送信時に最下部へスクロール
     scroll_to_bottom()
 
     with st.chat_message("assistant"):
@@ -204,5 +222,4 @@ if submit_btn and user_input_raw.strip():
                 st.markdown(reply)
                 st.session_state.messages.append({"role": "assistant", "content": reply})
 
-    # AIの返答が出力された後にも最下部へスクロール
     scroll_to_bottom()
