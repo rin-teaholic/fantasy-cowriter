@@ -98,11 +98,21 @@ if st.session_state.selected_mode is None:
 # ==========================================
 # 2. モード選択後：チャット画面
 # ==========================================
-mode_col, reset_col = st.columns([4, 1])
+# カラムを3つに分割し、ボタンを横並びに配置
+mode_col, update_col, reset_col = st.columns([4, 1.5, 1.5])
 with mode_col:
     st.info(f"**現在のモード:** {st.session_state.selected_mode}")
+
+with update_col:
+    # ドキュメントの再読み込みボタン
+    if st.button("📄 最新化", help="Googleドキュメントの最新状態を読み込み直します", use_container_width=True):
+        with st.spinner("ドキュメントを再読み込み中..."):
+            st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
+        st.toast("✅ ドキュメントを最新状態に更新しました！") # 画面下部にポップアップ通知
+
 with reset_col:
-    if st.button("🔄 切替", help="モード選択画面に戻ります"):
+    # モード切替ボタン
+    if st.button("🔄 切替", help="モード選択画面に戻ります", use_container_width=True):
         st.session_state.selected_mode = None
         st.session_state.messages = []
         st.session_state.current_draft = ""
