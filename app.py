@@ -106,7 +106,7 @@ if st.session_state.selected_mode is None:
                         f"{proposal}{fallback_notice}\n\n---\n"
                         "💡 **使い方:**\n"
                         "- 「〇〇のアイデアを出して」「この名称を変更したい。いくつか提案して」➔ 簡潔な候補リストを提示します\n"
-                        "- 気になる候補があれば「○番で詳細化して」➔ 地政学・言語ルールを適用した完全版設定を作成します"
+                        "- 気になる候補があれば「○番で詳細化して」「1番に〜の要素を足して整えて」➔ 完成版設定を作成します"
                     )
                 except Exception:
                     initial_msg = "⚠️ APIが極度に混雑しています。数十秒待ってから「🔄 モード切替」を押して再試行してください。"
@@ -171,12 +171,10 @@ with reset_col:
         st.session_state.generating_response = False
         st.rerun()
 
-# チャット履歴の表示（デバッグ情報表示付き）
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         
-        # デバッグログが保存されている場合、折りたたみで画面上に表示
         if msg.get("debug_info"):
             with st.expander("🔍 送信ログ・文脈を確認"):
                 st.markdown("**【ユーザー指示】**")
@@ -193,7 +191,6 @@ if st.session_state.generating_response:
             user_input = st.session_state.messages[-1]["content"]
             history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
             
-            # ターミナルログ出力
             print("\n" + "="*50)
             print(f"📩 [USER INPUT]: {user_input}")
             print(f"📜 [HISTORY TEXT]:\n{history_text}")
@@ -229,28 +226,28 @@ if st.session_state.generating_response:
                         reply = f"【ディレクターからの提案】{notice}\n{raw_result}"
                     
                     else:
-                        is_detail_request = any(kw in user_input for kw in ["詳細化", "詳しく", "深掘り", "決定", "これにする", "確定", "詰めて", "具体化", "作成して", "完成させて"])
+                        # 複数候補の提示を求めているかどうかの判定
                         is_brainstorm_request = any(kw in user_input for kw in [
                             "パターン", "アイディア", "アイデア", "候補", "ブレスト",
-                            "いくつか", "複数", "何個か", "別案", "別の", "違う", "変更",
-                            "名称", "名前", "ネーミング", "言い換え", "バリエーション",
-                            "リスト", "10", "5", "案を", "案出", "提案"
+                            "いくつか", "複数", "何個か", "別案", "別の", "違う候補",
+                            "名前の候補", "名称の候補", "ネーミング案", "バリエーション",
+                            "リストアップ", "10個", "5個", "案を出して", "案出", "軽く出して"
                         ])
                         
-                        # 候補出し判定
-                        if is_brainstorm_request and not is_detail_request:
+                        # 候補出しが明確に指定されている場合のみブレストへ
+                        if is_brainstorm_request:
                             debug_pipeline_name = "run_setting_brainstorm（候補・ブレスト出し）"
                             raw_result, used_fallback = run_with_fallback(run_setting_brainstorm, st.session_state.doc_content, history_text, user_input)
                             notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
-                            reply = f"{raw_result}{notice}\n\n---\n**💡 気になる候補はありますか？**\n（例：『3番で詳細化して』『2番の名称を採用して設定を詰めて』のように指定してください）"
+                            reply = f"{raw_result}{notice}\n\n---\n**💡 気になる候補はありますか？**\n（例：『1番に〜を足して整えて』『3番を採用して台詞サンプルを作って』のように指定してください）"
                         
-                        # 1案の詳細作成パイプライン
+                        # 特定の案（1番など）の具体化、または設定の作成・調整
                         else:
-                            debug_pipeline_name = "run_setting_creation（詳細化パイプライン）"
+                            debug_pipeline_name = "run_setting_creation（詳細化・台詞/設定作成）"
                             raw_result, used_fallback = run_with_fallback(run_setting_creation, st.session_state.doc_content, history_text, user_input)
                             st.session_state.current_draft = raw_result
                             notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
-                            reply = f"{raw_result}{notice}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
+                            reply = f"{raw_result}{notice}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、台詞やニュアンスを微調整する場合は指示を入力してください）"
 
                 # 📖 小説執筆モード
                 else:
@@ -272,7 +269,6 @@ if st.session_state.generating_response:
 
             st.markdown(reply)
             
-            # デバッグ情報を紐付けてメッセージ保存
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": reply,
@@ -291,7 +287,7 @@ if st.session_state.generating_response:
 with st.form(key="chat_form", clear_on_submit=True):
     user_input_raw = st.text_area(
         label="メッセージ入力",
-        placeholder="メッセージを入力してください（例：『この名称を変更したい。いくつか提案して』『3番で詳細化して』）",
+        placeholder="メッセージを入力してください（例：『1番に炭治郎的な優しさを加えた口調にして』）",
         height=100,
         label_visibility="collapsed"
     )
