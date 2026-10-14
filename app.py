@@ -1,8 +1,10 @@
 import os
+import json
+import uuid
 import streamlit as st
 import streamlit.components.v1 as components
 from crewai import Task, Crew, Process
-from auth import check_password
+from auth import check_password, logout
 from agents import get_agents
 from workflows import (
     run_setting_proposal,
@@ -11,6 +13,7 @@ from workflows import (
     run_novel_writing,
 )
 from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
+from streamlit_cookies_controller import CookieController
 
 # --- 画面の基本設定 ---
 st.set_page_config(page_title="Fantasy Co-Writer", page_icon="✍️", layout="centered")
@@ -34,9 +37,45 @@ def scroll_to_bottom():
     except Exception:
         pass
 
+# --- パスワード認証 (Cookie対応) ---
 if not check_password():
     st.stop()
 
+# --- セッション永続化マネージャー ---
+controller = CookieController()
+SESSION_COOKIE = "fc_session_id"
+SESSIONS_DIR = ".sessions"
+os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+def get_or_create_session_id():
+    sid = controller.get(SESSION_COOKIE)
+    if not sid:
+        sid = str(uuid.uuid4())
+        controller.set(SESSION_COOKIE, sid)
+    return sid
+
+session_id = get_or_create_session_id()
+session_file_path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+
+def load_saved_session():
+    if os.path.exists(session_file_path):
+        try:
+            with open(session_file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_current_session():
+    data = {
+        "selected_mode": st.session_state.selected_mode,
+        "messages": st.session_state.messages,
+        "current_draft": st.session_state.current_draft,
+    }
+    with open(session_file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# --- 環境変数とモデル設定 ---
 os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 DOCUMENT_ID = st.secrets["DOCUMENT_ID"]
 
@@ -59,21 +98,23 @@ def run_with_fallback(workflow_func, *args):
     try:
         return workflow_func(primary_agents, *args), False
     except Exception as e:
-        print(f"⚠️ [LOG] プライマリモデル失敗: {e} -> 予備モデルで再試行します")
+        print(f"⚠️ [LOG] プライマリモデル失敗: {e} -> 予備モデルで再試行")
         try:
             return workflow_func(fallback_agents, *args), True
         except Exception as fallback_error:
-            print(f"❌ [LOG] 予備モデルも失敗: {fallback_error}")
             raise RuntimeError(f"両モデルでリクエストが失敗しました: {fallback_error}")
 
+# --- セッション状態の復元・初期化 ---
+persisted_data = load_saved_session()
+
 if "selected_mode" not in st.session_state:
-    st.session_state.selected_mode = None
+    st.session_state.selected_mode = persisted_data.get("selected_mode", None)
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = persisted_data.get("messages", [])
 if "doc_content" not in st.session_state:
     st.session_state.doc_content = ""
 if "current_draft" not in st.session_state:
-    st.session_state.current_draft = ""
+    st.session_state.current_draft = persisted_data.get("current_draft", "")
 if "generating_response" not in st.session_state:
     st.session_state.generating_response = False
 
@@ -96,22 +137,23 @@ if st.session_state.selected_mode is None:
     with col1:
         if st.button("🛠️ 設定構築モード\n\n(世界観・国家・魔法・言語の作成)", use_container_width=True):
             st.session_state.selected_mode = "🛠️ 設定構築モード"
-            with st.spinner("ディレクターが設定ドキュメントを読み込み、提案を準備中..."):
+            with st.spinner("ディレクターが提案を準備中..."):
                 try:
                     proposal, used_fallback = run_with_fallback(run_setting_proposal, st.session_state.doc_content)
-                    fallback_notice = "\n\n*(※メインモデル混雑のため予備モデルで提案を生成しました)*" if used_fallback else ""
+                    fallback_notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
                     initial_msg = (
                         "👋 **ディレクターです！設定構築モードを開始します。**\n\n"
                         "既存のドキュメントを踏まえ、次に深掘りすべきテーマ案をまとめました：\n\n"
                         f"{proposal}{fallback_notice}\n\n---\n"
                         "💡 **使い方:**\n"
-                        "- 「〇〇のアイデアを出して」「この名称を変更したい。いくつか提案して」➔ 簡潔な候補リストを提示します\n"
-                        "- 気になる候補があれば「○番で詳細化して」「1番に〜の要素を足して整えて」➔ 完成版設定を作成します"
+                        "- 「〇〇のアイデアを出して」➔ 候補リストを提示します\n"
+                        "- 「○番に〜を足して整えて」➔ 完成版設定を作成します"
                     )
                 except Exception:
-                    initial_msg = "⚠️ APIが極度に混雑しています。数十秒待ってから「🔄 モード切替」を押して再試行してください。"
+                    initial_msg = "⚠️ API混雑中。時間を置いて「🔄 モード切替」を押してください。"
                 
                 st.session_state.messages.append({"role": "assistant", "content": initial_msg})
+                save_current_session()
             st.rerun()
 
     with col2:
@@ -122,27 +164,24 @@ if st.session_state.selected_mode is None:
                     def novel_init(agents_map):
                         director = agents_map["director"]
                         task = Task(
-                            description=(
-                                f"【既存設定】\n{st.session_state.doc_content}...\n\n"
-                                f"上記の設定を踏まえ、小説本文の執筆を開始するにあたって、おすすめのシーンやエピソードの切り口を3〜4つ提案してください。"
-                            ),
+                            description=f"【既存設定】\n{st.session_state.doc_content}...\n\n小説本文の執筆におすすめのシーンを3〜4つ提案してください。",
                             expected_output="シーン・エピソードの候補リスト",
                             agent=director
                         )
                         return Crew(agents=[director], tasks=[task], process=Process.sequential).kickoff().raw
                     
                     result_raw, used_fallback = run_with_fallback(novel_init)
-                    fallback_notice = "\n\n*(※メインモデル混雑のため予備モデルで生成しました)*" if used_fallback else ""
+                    fallback_notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
                     initial_msg = (
                         "👋 **ディレクターです！小説執筆モードを開始します。**\n\n"
-                        "既存の世界観・設定をベースに、執筆を始めるおすすめのシーンをいくつかピックアップしました：\n\n"
                         f"{result_raw}{fallback_notice}\n\n---\n"
                         "書きたいシーンや指示を入力してください！"
                     )
                 except Exception:
-                    initial_msg = "⚠️ APIが極度に混雑しています。数十秒待ってから「🔄 モード切替」を押して再試行してください。"
+                    initial_msg = "⚠️ API混雑中。時間を置いて再試行してください。"
                 
                 st.session_state.messages.append({"role": "assistant", "content": initial_msg})
+                save_current_session()
             st.rerun()
 
     st.stop()
@@ -150,38 +189,42 @@ if st.session_state.selected_mode is None:
 # ==========================================
 # 2. モード選択後：チャット画面
 # ==========================================
-mode_col, update_col, reset_col = st.columns([3, 2, 2])
+mode_col, update_col, reset_col, logout_col = st.columns([3, 2, 2, 1])
 with mode_col:
-    st.info(f"**現在のモード:** {st.session_state.selected_mode}")
+    st.info(f"**モード:** {st.session_state.selected_mode}")
 
 with update_col:
-    if st.button("📄 ソース最新化", help="Googleドキュメントの最新状態を読み込み直します", use_container_width=True):
-        with st.spinner("ドキュメントを再読み込み中..."):
+    if st.button("📄 最新化", help="Googleドキュメントを再読み込み", use_container_width=True):
+        with st.spinner("更新中..."):
             try:
                 st.session_state.doc_content = read_tool._run(document_id=DOCUMENT_ID)
-                st.toast("✅ ドキュメントを最新状態に更新しました！")
+                st.toast("✅ ドキュメントを更新しました！")
             except Exception as e:
-                st.error(f"再読み込みに失敗しました: {e}")
+                st.error(f"更新失敗: {e}")
 
 with reset_col:
-    if st.button("🔄 モード切替", help="モード選択画面に戻ります", use_container_width=True):
+    if st.button("🔄 切替", help="モード選択に戻る", use_container_width=True):
         st.session_state.selected_mode = None
         st.session_state.messages = []
         st.session_state.current_draft = ""
         st.session_state.generating_response = False
+        save_current_session()
         st.rerun()
+
+with logout_col:
+    if st.button("🚪", help="ログアウト"):
+        logout()
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        
         if msg.get("debug_info"):
             with st.expander("🔍 送信ログ・文脈を確認"):
                 st.markdown("**【ユーザー指示】**")
                 st.text(msg["debug_info"].get("input", ""))
-                st.markdown("**【AIに渡した過去の文脈 (history_text)】**")
+                st.markdown("**【AIに渡した過去の文脈】**")
                 st.text(msg["debug_info"].get("history", "(なし)"))
-                st.markdown("**【実行されたパイプライン】**")
+                st.markdown("**【実行パイプライン】**")
                 st.code(msg["debug_info"].get("pipeline", "不明"))
 
 # --- AI返答処理 ---
@@ -190,16 +233,9 @@ if st.session_state.generating_response:
         with st.spinner("AIチームが作業中..."):
             user_input = st.session_state.messages[-1]["content"]
             history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
-            
-            print("\n" + "="*50)
-            print(f"📩 [USER INPUT]: {user_input}")
-            print(f"📜 [HISTORY TEXT]:\n{history_text}")
-            print("="*50 + "\n")
-
             debug_pipeline_name = "未判定"
             
             try:
-                # 【共通処理】保存指示の場合
                 if user_input.lower() in ['y', 'ok', 'はい', '保存', '保存して']:
                     debug_pipeline_name = "保存処理"
                     if st.session_state.current_draft:
@@ -217,16 +253,12 @@ if st.session_state.generating_response:
                     else:
                         reply = "保存する文章がまだありません。"
 
-                # 🛠️ 設定構築モード
                 elif "設定" in st.session_state.selected_mode:
                     if user_input.strip() in ["提案", "テーマ提案", "次何する？"]:
                         debug_pipeline_name = "run_setting_proposal（テーマ再提案）"
                         raw_result, used_fallback = run_with_fallback(run_setting_proposal, st.session_state.doc_content)
-                        notice = " *(※予備モデルで回答)*" if used_fallback else ""
-                        reply = f"【ディレクターからの提案】{notice}\n{raw_result}"
-                    
+                        reply = f"【ディレクターからの提案】\n{raw_result}"
                     else:
-                        # 複数候補の提示を求めているかどうかの判定
                         is_brainstorm_request = any(kw in user_input for kw in [
                             "パターン", "アイディア", "アイデア", "候補", "ブレスト",
                             "いくつか", "複数", "何個か", "別案", "別の", "違う候補",
@@ -234,41 +266,29 @@ if st.session_state.generating_response:
                             "リストアップ", "10個", "5個", "案を出して", "案出", "軽く出して"
                         ])
                         
-                        # 候補出しが明確に指定されている場合のみブレストへ
                         if is_brainstorm_request:
                             debug_pipeline_name = "run_setting_brainstorm（候補・ブレスト出し）"
                             raw_result, used_fallback = run_with_fallback(run_setting_brainstorm, st.session_state.doc_content, history_text, user_input)
                             notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
-                            reply = f"{raw_result}{notice}\n\n---\n**💡 気になる候補はありますか？**\n（例：『1番に〜を足して整えて』『3番を採用して台詞サンプルを作って』のように指定してください）"
-                        
-                        # 特定の案（1番など）の具体化、または設定の作成・調整
+                            reply = f"{raw_result}{notice}\n\n---\n**💡 気になる候補はありますか？**\n（例：『1番に〜を足して整えて』のように指定してください）"
                         else:
                             debug_pipeline_name = "run_setting_creation（詳細化・台詞/設定作成）"
                             raw_result, used_fallback = run_with_fallback(run_setting_creation, st.session_state.doc_content, history_text, user_input)
                             st.session_state.current_draft = raw_result
                             notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
-                            reply = f"{raw_result}{notice}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、台詞やニュアンスを微調整する場合は指示を入力してください）"
+                            reply = f"{raw_result}{notice}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
 
-                # 📖 小説執筆モード
                 else:
                     debug_pipeline_name = "run_novel_writing（小説本文執筆）"
                     raw_result, used_fallback = run_with_fallback(run_novel_writing, st.session_state.doc_content, history_text, user_input)
                     st.session_state.current_draft = raw_result
                     notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
-                    reply = f"{raw_result}{notice}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し描写を増やして」のように指示してください）"
-
-                print(f"🤖 [RAW RESPONSE]:\n{raw_result if 'raw_result' in locals() else reply}\n")
+                    reply = f"{raw_result}{notice}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
 
             except Exception as e:
-                print(f"❌ [ERROR]: {e}")
-                reply = (
-                    "⚠️ **Gemini API の極度なアクセス集中が発生しました。**\n\n"
-                    "メインモデル・予備モデルの両方で一時的に制限がかかりました。\n"
-                    "1分ほど時間を置いてから、もう一度送信してみてください。"
-                )
+                reply = "⚠️ API混雑が発生しました。数十秒待ってから再試行してください。"
 
             st.markdown(reply)
-            
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": reply,
@@ -278,7 +298,7 @@ if st.session_state.generating_response:
                     "pipeline": debug_pipeline_name
                 }
             })
-            
+            save_current_session()
             st.session_state.generating_response = False
             scroll_to_bottom()
             st.rerun()
@@ -287,7 +307,7 @@ if st.session_state.generating_response:
 with st.form(key="chat_form", clear_on_submit=True):
     user_input_raw = st.text_area(
         label="メッセージ入力",
-        placeholder="メッセージを入力してください（例：『1番に炭治郎的な優しさを加えた口調にして』）",
+        placeholder="メッセージを入力してください",
         height=100,
         label_visibility="collapsed"
     )
@@ -296,6 +316,7 @@ with st.form(key="chat_form", clear_on_submit=True):
 if submit_btn and user_input_raw.strip():
     user_input = user_input_raw.strip()
     st.session_state.messages.append({"role": "user", "content": user_input})
+    save_current_session()
     st.session_state.generating_response = True
     scroll_to_bottom()
     st.rerun()
