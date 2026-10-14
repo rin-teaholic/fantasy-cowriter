@@ -37,15 +37,39 @@ if not check_password():
 # --- 環境変数の設定 ---
 os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 DOCUMENT_ID = st.secrets["DOCUMENT_ID"]
-MODEL = "gemini/gemini-3.5-flash-lite"
+
+# モデル定義（プライマリ & 予備）
+PRIMARY_MODEL = "gemini/gemini-3.5-flash-lite"
+FALLBACK_MODEL = "gemini/gemini-3.1-flash-lite"
 
 # --- ツールとエージェントの準備 ---
 @st.cache_resource
 def init_tools():
     return ReadGoogleDocTool(), AppendGoogleDocTool()
 
+@st.cache_resource
+def get_agent_pool(model_name):
+    return get_agents(model_name)
+
 read_tool, append_tool = init_tools()
-agents = get_agents(MODEL)
+primary_agents = get_agent_pool(PRIMARY_MODEL)
+fallback_agents = get_agent_pool(FALLBACK_MODEL)
+
+# --- 自動フォールバック実行ラッパー ---
+def run_with_fallback(workflow_func, *args):
+    """
+    プライマリモデルで実行し、失敗（503や混雑等）した場合は予備モデルで再試行する。
+    戻り値: (実行結果, フォールバックを使用したかの真偽値)
+    """
+    try:
+        return workflow_func(primary_agents, *args), False
+    except Exception as primary_error:
+        # プライマリ失敗時に予備モデルで再試行
+        try:
+            return workflow_func(fallback_agents, *args), True
+        except Exception as fallback_error:
+            # 両方失敗した場合はエラーを送出
+            raise RuntimeError(f"両モデルでリクエストが失敗しました: {fallback_error}")
 
 # --- セッション状態の初期化 ---
 if "selected_mode" not in st.session_state:
@@ -83,18 +107,17 @@ if st.session_state.selected_mode is None:
             st.session_state.selected_mode = "🛠️ 設定構築モード"
             with st.spinner("ディレクターが設定ドキュメントを読み込み、提案を準備中..."):
                 try:
-                    proposal = run_setting_proposal(agents, st.session_state.doc_content)
+                    proposal, used_fallback = run_with_fallback(run_setting_proposal, st.session_state.doc_content)
+                    fallback_notice = "\n\n*(※メインモデル混雑のため予備モデルで提案を生成しました)*" if used_fallback else ""
                     initial_msg = (
                         "👋 **ディレクターです！設定構築モードを開始します。**\n\n"
                         "既存のドキュメントを踏まえ、次に深掘りすべきテーマ案をまとめました：\n\n"
-                        f"{proposal}\n\n---\n"
+                        f"{proposal}{fallback_notice}\n\n---\n"
                         "気になるテーマの番号を入力するか、具体的に詰めたい設定を教えてください！"
                     )
                 except Exception as e:
-                    initial_msg = (
-                        "⚠️ **Gemini APIが一時的に混雑しています（503エラーなど）。**\n\n"
-                        "数十秒待ってから、画面上の「🔄 モード切替」を押して再試行してください。"
-                    )
+                    initial_msg = "⚠️ APIが極度に混雑しています。数十秒待ってから「🔄 モード切替」を押して再試行してください。"
+                
                 st.session_state.messages.append({"role": "assistant", "content": initial_msg})
             st.rerun()
 
@@ -104,27 +127,29 @@ if st.session_state.selected_mode is None:
             st.session_state.selected_mode = "📖 小説執筆モード"
             with st.spinner("ディレクターが執筆の切り口を準備中..."):
                 try:
-                    director = agents["director"]
-                    task = Task(
-                        description=(
-                            f"【既存設定】\n{st.session_state.doc_content}...\n\n"
-                            f"上記の設定を踏まえ、小説本文の執筆を開始するにあたって、おすすめのシーンやエピソードの切り口を3〜4つ提案してください。"
-                        ),
-                        expected_output="シーン・エピソードの候補リスト",
-                        agent=director
-                    )
-                    result = Crew(agents=[director], tasks=[task], process=Process.sequential).kickoff()
+                    def novel_init(agents_map):
+                        director = agents_map["director"]
+                        task = Task(
+                            description=(
+                                f"【既存設定】\n{st.session_state.doc_content}...\n\n"
+                                f"上記の設定を踏まえ、小説本文の執筆を開始するにあたって、おすすめのシーンやエピソードの切り口を3〜4つ提案してください。"
+                            ),
+                            expected_output="シーン・エピソードの候補リスト",
+                            agent=director
+                        )
+                        return Crew(agents=[director], tasks=[task], process=Process.sequential).kickoff().raw
+                    
+                    result_raw, used_fallback = run_with_fallback(novel_init)
+                    fallback_notice = "\n\n*(※メインモデル混雑のため予備モデルで生成しました)*" if used_fallback else ""
                     initial_msg = (
                         "👋 **ディレクターです！小説執筆モードを開始します。**\n\n"
                         "既存の世界観・設定をベースに、執筆を始めるおすすめのシーンをいくつかピックアップしました：\n\n"
-                        f"{result.raw}\n\n---\n"
+                        f"{result_raw}{fallback_notice}\n\n---\n"
                         "書きたいシーンや指示を入力してください！"
                     )
                 except Exception as e:
-                    initial_msg = (
-                        "⚠️ **Gemini APIが一時的に混雑しています（503エラーなど）。**\n\n"
-                        "数十秒待ってから、画面上の「🔄 モード切替」を押して再試行してください。"
-                    )
+                    initial_msg = "⚠️ APIが極度に混雑しています。数十秒待ってから「🔄 モード切替」を押して再試行してください。"
+                
                 st.session_state.messages.append({"role": "assistant", "content": initial_msg})
             st.rerun()
 
@@ -186,26 +211,29 @@ if st.session_state.generating_response:
                 # 🛠️ 設定構築モード
                 elif "設定" in st.session_state.selected_mode:
                     if "提案" in user_input or ("テーマ" in user_input and len(user_input) < 15):
-                        raw_result = run_setting_proposal(agents, st.session_state.doc_content)
-                        reply = f"【ディレクターからの提案】\n{raw_result}"
+                        raw_result, used_fallback = run_with_fallback(run_setting_proposal, st.session_state.doc_content)
+                        notice = " *(※予備モデルで回答)*" if used_fallback else ""
+                        reply = f"【ディレクターからの提案】{notice}\n{raw_result}"
                     else:
                         history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
-                        raw_result = run_setting_creation(agents, st.session_state.doc_content, history_text, user_input)
+                        raw_result, used_fallback = run_with_fallback(run_setting_creation, st.session_state.doc_content, history_text, user_input)
                         st.session_state.current_draft = raw_result
-                        reply = f"{raw_result}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
+                        notice = "\n\n*(※メインモデル混雑のため予備モデルで生成しました)*" if used_fallback else ""
+                        reply = f"{raw_result}{notice}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
 
                 # 📖 小説執筆モード
                 else:
                     history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
-                    raw_result = run_novel_writing(agents, st.session_state.doc_content, history_text, user_input)
+                    raw_result, used_fallback = run_with_fallback(run_novel_writing, st.session_state.doc_content, history_text, user_input)
                     st.session_state.current_draft = raw_result
-                    reply = f"{raw_result}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し描写を増やして」のように指示してください）"
+                    notice = "\n\n*(※メインモデル混雑のため予備モデルで生成しました)*" if used_fallback else ""
+                    reply = f"{raw_result}{notice}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し描写を増やして」のように指示してください）"
 
             except Exception as e:
                 reply = (
-                    "⚠️ **Google Gemini API の一時的な混雑（503エラー）が発生しました。**\n\n"
-                    "サーバーへのアクセスが一時的に集中しています。\n"
-                    "1分ほど時間を置いてから、もう一度同じ指示を送信してみてください。"
+                    "⚠️ **Gemini API の極度なアクセス集中が発生しました。**\n\n"
+                    "メインモデル・予備モデルの両方で一時的に制限がかかりました。\n"
+                    "1分ほど時間を置いてから、もう一度送信してみてください。"
                 )
 
             st.markdown(reply)
