@@ -4,7 +4,12 @@ import streamlit.components.v1 as components
 from crewai import Task, Crew, Process
 from auth import check_password
 from agents import get_agents
-from workflows import run_setting_proposal, run_setting_brainstorm, run_setting_creation, run_novel_writing
+from workflows import (
+    run_setting_proposal,
+    run_setting_brainstorm,
+    run_setting_creation,
+    run_novel_writing,
+)
 from tools.gdocs_tool import ReadGoogleDocTool, AppendGoogleDocTool
 
 # --- 画面の基本設定 ---
@@ -53,10 +58,12 @@ fallback_agents = get_agent_pool(FALLBACK_MODEL)
 def run_with_fallback(workflow_func, *args):
     try:
         return workflow_func(primary_agents, *args), False
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ [LOG] プライマリモデル失敗: {e} -> 予備モデルで再試行します")
         try:
             return workflow_func(fallback_agents, *args), True
         except Exception as fallback_error:
+            print(f"❌ [LOG] 予備モデルも失敗: {fallback_error}")
             raise RuntimeError(f"両モデルでリクエストが失敗しました: {fallback_error}")
 
 if "selected_mode" not in st.session_state:
@@ -98,8 +105,8 @@ if st.session_state.selected_mode is None:
                         "既存のドキュメントを踏まえ、次に深掘りすべきテーマ案をまとめました：\n\n"
                         f"{proposal}{fallback_notice}\n\n---\n"
                         "💡 **使い方:**\n"
-                        "- 「〇〇のアイデアを10個出して」➔ 簡潔なアイデア一覧を作成します\n"
-                        "- 気になる案があれば「○番を詳細化して」➔ 地政学・言語ルールを適用した完全版設定を作成します"
+                        "- 「〇〇のアイデアを出して」「この名称を変更したい。いくつか提案して」➔ 簡潔な候補リストを提示します\n"
+                        "- 気になる候補があれば「○番で詳細化して」➔ 地政学・言語ルールを適用した完全版設定を作成します"
                     )
                 except Exception:
                     initial_msg = "⚠️ APIが極度に混雑しています。数十秒待ってから「🔄 モード切替」を押して再試行してください。"
@@ -164,9 +171,20 @@ with reset_col:
         st.session_state.generating_response = False
         st.rerun()
 
+# チャット履歴の表示（デバッグ情報表示付き）
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        
+        # デバッグログが保存されている場合、折りたたみで画面上に表示
+        if msg.get("debug_info"):
+            with st.expander("🔍 送信ログ・文脈を確認"):
+                st.markdown("**【ユーザー指示】**")
+                st.text(msg["debug_info"].get("input", ""))
+                st.markdown("**【AIに渡した過去の文脈 (history_text)】**")
+                st.text(msg["debug_info"].get("history", "(なし)"))
+                st.markdown("**【実行されたパイプライン】**")
+                st.code(msg["debug_info"].get("pipeline", "不明"))
 
 # --- AI返答処理 ---
 if st.session_state.generating_response:
@@ -175,9 +193,18 @@ if st.session_state.generating_response:
             user_input = st.session_state.messages[-1]["content"]
             history_text = "".join([f"【{'ユーザー' if msg['role']=='user' else 'AI'}】\n{msg['content']}\n\n" for msg in st.session_state.messages[-5:-1]])
             
+            # ターミナルログ出力
+            print("\n" + "="*50)
+            print(f"📩 [USER INPUT]: {user_input}")
+            print(f"📜 [HISTORY TEXT]:\n{history_text}")
+            print("="*50 + "\n")
+
+            debug_pipeline_name = "未判定"
+            
             try:
                 # 【共通処理】保存指示の場合
                 if user_input.lower() in ['y', 'ok', 'はい', '保存', '保存して']:
+                    debug_pipeline_name = "保存処理"
                     if st.session_state.current_draft:
                         target_tab = "co_writer_crewによる追加設定" if "設定" in st.session_state.selected_mode else "co_writer_crewによる小説本文"
                         prefix = "■ 追加設定" if "設定" in st.session_state.selected_mode else "■ 小説本文"
@@ -195,33 +222,48 @@ if st.session_state.generating_response:
 
                 # 🛠️ 設定構築モード
                 elif "設定" in st.session_state.selected_mode:
-                    # 判定1: ディレクターからのテーマ再提案
                     if user_input.strip() in ["提案", "テーマ提案", "次何する？"]:
+                        debug_pipeline_name = "run_setting_proposal（テーマ再提案）"
                         raw_result, used_fallback = run_with_fallback(run_setting_proposal, st.session_state.doc_content)
                         notice = " *(※予備モデルで回答)*" if used_fallback else ""
                         reply = f"【ディレクターからの提案】{notice}\n{raw_result}"
                     
-                    # 判定2: アイデア一覧・ブレスト出し（「パターン」「アイデア」「案」「10個」など）
-                    elif any(kw in user_input for kw in ["パターン", "アイディア", "アイデア", "候補", "ブレスト", "10", "案を", "案出", "いくつか"]):
-                        raw_result, used_fallback = run_with_fallback(run_setting_brainstorm, st.session_state.doc_content, history_text, user_input)
-                        notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
-                        reply = f"{raw_result}{notice}\n\n---\n**💡 気になるパターンの番号を教えてください！**\n（例：『3番を詳細化して』『2番と5番を組み合わせて詰めて』と送信すると、軍略チェックと言語校閲を行った完全版を作成します）"
-                    
-                    # 判定3: 1案の詳細作成（3エージェント連動パイプライン）
                     else:
-                        raw_result, used_fallback = run_with_fallback(run_setting_creation, st.session_state.doc_content, history_text, user_input)
-                        st.session_state.current_draft = raw_result
-                        notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
-                        reply = f"{raw_result}{notice}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
+                        is_detail_request = any(kw in user_input for kw in ["詳細化", "詳しく", "深掘り", "決定", "これにする", "確定", "詰めて", "具体化", "作成して", "完成させて"])
+                        is_brainstorm_request = any(kw in user_input for kw in [
+                            "パターン", "アイディア", "アイデア", "候補", "ブレスト",
+                            "いくつか", "複数", "何個か", "別案", "別の", "違う", "変更",
+                            "名称", "名前", "ネーミング", "言い換え", "バリエーション",
+                            "リスト", "10", "5", "案を", "案出", "提案"
+                        ])
+                        
+                        # 候補出し判定
+                        if is_brainstorm_request and not is_detail_request:
+                            debug_pipeline_name = "run_setting_brainstorm（候補・ブレスト出し）"
+                            raw_result, used_fallback = run_with_fallback(run_setting_brainstorm, st.session_state.doc_content, history_text, user_input)
+                            notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
+                            reply = f"{raw_result}{notice}\n\n---\n**💡 気になる候補はありますか？**\n（例：『3番で詳細化して』『2番の名称を採用して設定を詰めて』のように指定してください）"
+                        
+                        # 1案の詳細作成パイプライン
+                        else:
+                            debug_pipeline_name = "run_setting_creation（詳細化パイプライン）"
+                            raw_result, used_fallback = run_with_fallback(run_setting_creation, st.session_state.doc_content, history_text, user_input)
+                            st.session_state.current_draft = raw_result
+                            notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
+                            reply = f"{raw_result}{notice}\n\n---\n**💡 この設定をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は指示を入力してください）"
 
                 # 📖 小説執筆モード
                 else:
+                    debug_pipeline_name = "run_novel_writing（小説本文執筆）"
                     raw_result, used_fallback = run_with_fallback(run_novel_writing, st.session_state.doc_content, history_text, user_input)
                     st.session_state.current_draft = raw_result
                     notice = "\n\n*(※予備モデルで生成)*" if used_fallback else ""
                     reply = f"{raw_result}{notice}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し描写を増やして」のように指示してください）"
 
-            except Exception:
+                print(f"🤖 [RAW RESPONSE]:\n{raw_result if 'raw_result' in locals() else reply}\n")
+
+            except Exception as e:
+                print(f"❌ [ERROR]: {e}")
                 reply = (
                     "⚠️ **Gemini API の極度なアクセス集中が発生しました。**\n\n"
                     "メインモデル・予備モデルの両方で一時的に制限がかかりました。\n"
@@ -229,7 +271,18 @@ if st.session_state.generating_response:
                 )
 
             st.markdown(reply)
-            st.session_state.messages.append({"role": "assistant", "content": reply})
+            
+            # デバッグ情報を紐付けてメッセージ保存
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": reply,
+                "debug_info": {
+                    "input": user_input,
+                    "history": history_text,
+                    "pipeline": debug_pipeline_name
+                }
+            })
+            
             st.session_state.generating_response = False
             scroll_to_bottom()
             st.rerun()
@@ -238,7 +291,7 @@ if st.session_state.generating_response:
 with st.form(key="chat_form", clear_on_submit=True):
     user_input_raw = st.text_area(
         label="メッセージ入力",
-        placeholder="メッセージを入力してください（例：『騎士団の特殊部隊のアイデアを10パターン出して』『3番を詳細化して』）",
+        placeholder="メッセージを入力してください（例：『この名称を変更したい。いくつか提案して』『3番で詳細化して』）",
         height=100,
         label_visibility="collapsed"
     )
