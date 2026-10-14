@@ -37,7 +37,7 @@ if not check_password():
 # --- 環境変数の設定 ---
 os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 DOCUMENT_ID = st.secrets["DOCUMENT_ID"]
-MODEL = "gemini/gemini-2.0-flash"  # 混雑頻度を抑えるため標準的な安定モデルを指定
+MODEL = "gemini/gemini-3.5-flash-lite"
 
 # --- ツールとエージェントの準備 ---
 @st.cache_resource
@@ -159,7 +159,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# --- AI返答処理（try-exceptで503エラーをガード） ---
+# --- AI返答処理 ---
 if st.session_state.generating_response:
     with st.chat_message("assistant"):
         with st.spinner("AIチームが作業中..."):
@@ -202,7 +202,6 @@ if st.session_state.generating_response:
                     reply = f"{raw_result}\n\n---\n**💡 この本文をドキュメントに保存しますか？**\n（保存する場合は「はい」、修正する場合は「もう少し描写を増やして」のように指示してください）"
 
             except Exception as e:
-                # 503エラーやタイムアウトが発生してもアプリを落とさず案内メッセージを表示
                 reply = (
                     "⚠️ **Google Gemini API の一時的な混雑（503エラー）が発生しました。**\n\n"
                     "サーバーへのアクセスが一時的に集中しています。\n"
